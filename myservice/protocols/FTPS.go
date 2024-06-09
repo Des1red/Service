@@ -7,6 +7,9 @@ import (
 	"bufio"
 	"log"
 	"strings"
+	"syscall"
+	
+	"golang.org/x/crypto/ssh/terminal"
 )
 
 func Ftps() {
@@ -443,10 +446,22 @@ func ftpAddUser() {
 			// Set up user password
 			var password, confirmpass string
 			for {
+				//prompt for pass
 				fmt.Print("Enter password for " + user + ": ")
-				fmt.Scanln(&password)
+				bytePassword, err := terminalReadPassword()
+				if err != nil {
+					fmt.Println("Error reading password:", err)
+					return
+				}
+				password = strings.TrimSpace(string(bytePassword))
 				fmt.Print("Confirm Password: ")
-				fmt.Scanln(&confirmpass)
+				// retype pass to confirm
+				bytePassword, err = terminalReadPassword()
+				if err != nil {
+					fmt.Println("Error reading password:", err)
+					return
+				}
+				confirmpass = strings.TrimSpace(string(bytePassword))
 				if password == confirmpass {
 					break
 				} else {
@@ -483,6 +498,12 @@ func ftpAddUser() {
 			fmt.Println("Type y or n")
 		}
 	}
+}
+
+func terminalReadPassword() ([]byte, error) {
+	password, err := terminal.ReadPassword(int(syscall.Stdin))
+	fmt.Println() // Move to the next line after password input
+	return password, err
 }
 
 func ftpStop() {
