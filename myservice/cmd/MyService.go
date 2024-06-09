@@ -18,11 +18,12 @@ func menu() int {
          __/ |                                  
         |___/                                   
 	`)
-	fmt.Println("\n1. FTPS")
+	fmt.Println("\n1. FTPS    2. SFTP")
 
 	// Map of valid options
 	validOptions := map[int]bool{
 		1: true,
+		2: true,
 		// Add more options here as needed
 	}
 
@@ -50,5 +51,8 @@ func main() {
 	fmt.Printf("You selected option %d\n", service)
 	if service == 1 {
 		protocols.Ftps()
+	}
+	if service == 2 {
+		protocols.Sftp()
 	}
 }
