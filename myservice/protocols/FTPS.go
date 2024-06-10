@@ -8,79 +8,133 @@ import (
 	"log"
 	"strings"
 	"syscall"
-	
+	"os/signal"
 	"golang.org/x/crypto/ssh/terminal"
 )
 
 func Ftps() {
-	for {
-		fmt.Print("\n1. Setup Ftp Server.\n")
-		fmt.Print("2. Add User.\n")
-		fmt.Print("3. Delete User.\n")
-		fmt.Print("4. Stop Ftp Server.\n")
-		fmt.Print("5. Delete SSL Certificate and key\n")
-		fmt.Print("6. Remove user access\n")
-		fmt.Print("7. List FTP Users\n")
-		fmt.Print("8. Show Server Status\n")
-		fmt.Print("0. Exit\n")
-		fmt.Print("ftps >> ")
-		var choice int
-		fmt.Scanln(&choice)
-		for {
-			if choice == 1 {
-				ftpSetup()
-				break
-			} else if choice == 2 {
-				ftpAddUser()
-				break
-			} else if choice == 3 {
-				ftpDel()
-				break
-			} else if choice == 4 {
-				ftpStop()
-				break
-			} else if choice == 5{
-				DelSSLCert()
-				break
-			} else if choice == 6 {
-				var user string
-				fmt.Print("User : ")
-				fmt.Scanln(&user)
-				if user == "" {
-					fmt.Print("No user provided\n")
-					break
-				}
-				removeUserFromVSFTPDUserList(user)
-				break
-			} else if choice == 7 {
-				fmt.Println()
-				usersFromlist()
-				fmt.Println()
-				break
-			} else if choice == 8 {
-				fmt.Print("\n\n Server Status \n\n")
-				if checkService("ufw") {
-					fmt.Println("Firewall is active.")
-				} else {
-					fmt.Println("Firewall is down.")
-				}
-				if checkService("vsftpd") {
-					fmt.Println("FTPS service is up.")
-				} else {
-					fmt.Println("FTPS service is down.")
-				}
-				fmt.Println()
-				break
-			} else if choice == 0 {
-				fmt.Print("Bye!")
-				return
-			} else {
-				fmt.Println("Invalid option.")
-				fmt.Print("ftp >> ")
-				fmt.Scanln(&choice)
-			}
+    for {
+        fmt.Print("\n1. Setup Ftp Server.\n")
+        fmt.Print("2. Add User.\n")
+        fmt.Print("3. Delete User.\n")
+        fmt.Print("4. Stop Ftp Server.\n")
+        fmt.Print("5. Delete SSL Certificate and key\n")
+        fmt.Print("6. Remove user access\n")
+        fmt.Print("7. List FTP Users\n")
+        fmt.Print("8. Show Server Status\n")
+        fmt.Print("9. Monitor logs\n")
+        fmt.Print("0. Exit\n")
+        fmt.Print("\nftps >> ")
+        var choice int
+        fmt.Scanln(&choice)
+        switch choice {
+        case 1:
+            ftpSetup()
+        case 2:
+            ftpAddUser()
+        case 3:
+            ftpDel()
+        case 4:
+            ftpStop()
+        case 5:
+            DelSSLCert()
+        case 6:
+            var user string
+            fmt.Print("User : ")
+            fmt.Scanln(&user)
+            if user == "" {
+                fmt.Print("No user provided\n")
+                break
+            }
+            removeUserFromVSFTPDUserList(user)
+        case 7:
+            fmt.Println()
+            usersFromlist()
+            fmt.Println()
+        case 8:
+            fmt.Print("\n\n Server Status \n\n")
+            if checkService("ufw") {
+                fmt.Println("Firewall is active.")
+            } else {
+                fmt.Println("Firewall is down.")
+            }
+            if checkService("vsftpd") {
+                fmt.Println("FTPS service is up.")
+            } else {
+                fmt.Println("FTPS service is down.")
+            }
+            fmt.Println()
+        case 9:
+            monitorlogs()
+        case 0:
+            fmt.Print("Bye!")
+            return
+        default:
+            fmt.Println("Invalid option.")
+        }
+    }
+}
+
+func monitorlogs() {
+		// Start tailing the log file
+		cmd := exec.Command("tail", "-f", "/var/log/vsftpd.log")
+		
+		stdout, err := cmd.StdoutPipe()
+		if err != nil {
+			fmt.Println("Error creating StdoutPipe:", err)
+			return
 		}
-	}	
+	
+		stderr, err := cmd.StderrPipe()
+		if err != nil {
+			fmt.Println("Error creating StderrPipe:", err)
+			return
+		}
+	
+		if err := cmd.Start(); err != nil {
+			fmt.Println("Error starting log monitoring:", err)
+			return
+		}
+	
+		// Create a channel to listen for OS signals
+		sig := make(chan os.Signal, 1)
+		signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+	
+		// Create a goroutine to handle the OS signals
+		go func() {
+			// Wait for a signal
+			<-sig
+	
+			// Handle the signal (Ctrl+C)
+			fmt.Println("Received Ctrl+C, stopping monitoring...")
+			err := cmd.Process.Signal(syscall.SIGTERM)
+			if err != nil {
+				fmt.Println("Error stopping monitoring:", err)
+			} else {
+				fmt.Println("Monitoring process ended successfully.")
+			}
+		}()
+	
+		// Create a goroutine to print the log output
+		go func() {
+			scanner := bufio.NewScanner(stdout)
+			for scanner.Scan() {
+				fmt.Println(scanner.Text())
+			}
+		}()
+	
+		// Create a goroutine to print the log errors
+		go func() {
+			scanner := bufio.NewScanner(stderr)
+			for scanner.Scan() {
+				fmt.Println(scanner.Text())
+			}
+		}()
+	
+		// Wait for the command to finish
+		if err := cmd.Wait(); err != nil {
+			fmt.Println("Log monitoring ended with error:", err)
+		}		
 }
 
 func DelSSLCert() {
@@ -665,13 +719,13 @@ func ConfigureVSFTPD() {
 }
 
 // createOpenSSLConfig creates the OpenSSL configuration file with strong settings
-func createOpenSSLConfig(filePath string) error {
+func createOpenSSLConfig(filePath,ipAddress string) error {
 	if _, err := os.Stat(filePath); err == nil {
 		fmt.Printf("Configuration file %s already exists.\n", filePath)
 		return nil
 	}
 
-	configContent := `
+	configContent := fmt.Sprintf(`
 [ req ]
 default_bits        = 4096
 default_md          = sha512
@@ -687,7 +741,7 @@ stateOrProvinceName             = California
 localityName                    = San Francisco
 organizationName                = Personal
 organizationalUnitName          = IT
-commonName                      = 192.168.1.17
+commonName                      = %s
 emailAddress                    = admin@kali
 
 [ req_ext ]
@@ -702,9 +756,9 @@ extendedKeyUsage = serverAuth, clientAuth
 
 [ alt_names ]
 DNS.1   = myftpserver.local
-IP.1    = 192.168.1.17
+IP.1    = %s
+`, ipAddress, ipAddress)
 
-`
 	file, err := os.Create(filePath)
 	if err != nil {
 		return err
@@ -720,12 +774,12 @@ IP.1    = 192.168.1.17
 	return nil
 }
 
-func SSLCert() {
+func SSLCert(ipAddress string) {
 	pemPath := "/etc/ssl/private/vsftpd.pem"
 	bakPath := pemPath + ".bak"
 	confPath := "/etc/ssl/private/openssl.cnf"
 
-	err := createOpenSSLConfig(confPath)
+	err := createOpenSSLConfig(confPath, ipAddress)
 	if err != nil {
 		log.Fatalf("Failed to create OpenSSL configuration file: %v", err)
 	} else {
@@ -796,11 +850,13 @@ func createSSLcert() {
 	}
 
 	if choice == "yes" {
+		var ipAddress string
 		pemPath := "/etc/ssl/private/vsftpd.pem"
 		bakPath := pemPath + ".bak"
-
 		if _, err := os.Stat(pemPath); os.IsNotExist(err) {
-			SSLCert()
+			fmt.Print("Server IP: ")
+			fmt.Scanln(&ipAddress)
+			SSLCert(ipAddress)
 		} else {
 			fmt.Println("SSL certificate already exists.")
 			fmt.Print("Would you like to generate a new certificate? (yes/no): ")
@@ -826,7 +882,9 @@ func createSSLcert() {
 				if err == nil {
 					fmt.Println("Old SSL certificate deleted. Making a new one")
 				}
-				SSLCert()
+				fmt.Print("Server IP: ")
+				fmt.Scanln(&ipAddress)
+				SSLCert(ipAddress)
 			} else {
 				fmt.Println("Using existing SSL certificate.")
 			}
