@@ -11,7 +11,7 @@ import (
 
 var (
     // sftp groups
-    Groups = []string{"sftp", "testgroup"}
+    Groups = []string{"sftp"}
 )
 const sshdConfigPath = "/etc/ssh/sshd_config"
 
@@ -542,8 +542,9 @@ func listGroups() error {
     for _, groupName := range Groups {
         for _, group := range groups {
             if strings.Contains(group, groupName) {
-                fmt.Printf("Listing FTP users for group %s:\n", groupName)
+                fmt.Printf("Group %s -->\n", groupName)
                 listFTPUsers(groupName)
+				fmt.Println()
                 break
             }
         }
