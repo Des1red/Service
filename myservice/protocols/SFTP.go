@@ -9,6 +9,10 @@ import (
 	"golang.org/x/crypto/ssh/terminal"
 )
 
+var (
+    // sftp groups
+    Groups = []string{"sftp", "testgroup"}
+)
 const sshdConfigPath = "/etc/ssh/sshd_config"
 
 func Sftp() {
@@ -19,7 +23,11 @@ func Sftp() {
 3. Delete User.
 4. Stop FTP Server.
 5. List FTP Users.
-6. Show Server Status.
+6. List SFTP groups.
+7. Add Sftp group.
+8. Delete Sftp group.
+9. Show Server Status.
+10. Show Server Logs.
 0. Exit.
 
 sftp >> `)
@@ -36,9 +44,31 @@ sftp >> `)
 		case 4:
 			stopSftp()
 		case 5:
-			listFTPUsers()
+			fmt.Print("\nGroup : ")
+			var group string
+			fmt.Scanln(&group)
+			exists , err := groupExists(group)
+			if err != nil {
+				fmt.Printf("\nError : %s\n",err)
+				continue
+			}
+			if !exists {
+				fmt.Println("Group does not exists.")
+				continue
+			}
+			listFTPUsers(group)
 		case 6:
+			if err := listGroups(); err != nil {
+				fmt.Printf("Error listing groups: %v\n", err)
+			}
+		case 7:
+			customSftpGroup()
+		case 8:
+			deleteSFTPGroup()
+		case 9:
 			showServerStatus()
+		case 10:
+			showlogs()
 		case 0:
 			fmt.Println("Exiting.")
 			return
@@ -152,7 +182,8 @@ func addSFTPUser() {
 				fmt.Printf("Failed to set password for %s: %v\n", user, err)
 				return
 			}
-			if err := addUserToGroup(user, "sftp"); err != nil {
+			group := chooseGrouptoAdduser()
+			if err := addUserToGroup(user, group); err != nil {
 				fmt.Printf("Failed to add user %s to sftp group: %v\n", user, err)
 				return
 			}
@@ -240,8 +271,8 @@ func createUser(username string) error {
 	return cmd.Run()
 }
 
-func listFTPUsers() {
-	cmd := exec.Command("getent", "group", "sftp")
+func listFTPUsers(group string) {
+	cmd := exec.Command("getent", "group", group)
 	output, err := cmd.Output()
 	if err != nil {
 		fmt.Printf("Failed to list FTP users: %v\n", err)
@@ -396,11 +427,173 @@ func setDirPermissions(dirName string) error {
 }
 
 func showServerStatus() {
-	cmd := exec.Command("sudo", "systemctl", "status", "ssh")
+	if !checkService("ssh") {
+		fmt.Println("\n SSH is down.")
+	} else {
+		fmt.Println("\n SSH is up.")
+	}
+}
+
+func showlogs() {
+	cmd := exec.Command("sudo", "tail", "-f", "systemctl", "status", "ssh")
 	output, err := cmd.Output()
 	if err != nil {
 		fmt.Printf("Failed to get SSH service status: %v\n", err)
 		return
 	}
 	fmt.Println(string(output))
+}
+
+func deleteGroup(groupName string) error {
+	cmd := exec.Command("sudo", "groupdel", groupName)
+	return cmd.Run()
+}
+
+func deleteUsersFromGroup(groupName string) error {
+    // Get all users in the group
+    cmd := exec.Command("getent", "group", groupName)
+    output, err := cmd.Output()
+    if err != nil {
+        return fmt.Errorf("failed to get users in group %s: %v", groupName, err)
+    }
+
+    // Parse the output to extract user names
+    groupInfo := string(output)
+    if groupInfo == "" {
+        return fmt.Errorf("no users found in group %s", groupName)
+    }
+    parts := strings.Split(groupInfo, ":")
+    if len(parts) < 4 {
+        return fmt.Errorf("invalid group information for group %s", groupName)
+    }
+    users := strings.Split(parts[3], ",")
+
+    // Delete each user from the group
+    for _, user := range users {
+        user = strings.TrimSpace(user)
+        cmd := exec.Command("userdel", user)
+        err := cmd.Run()
+        if err != nil {
+            fmt.Printf("Failed to delete user: %s. Error: %v\n", user, err)
+        } else {
+            fmt.Printf("Deleted User: %s\n", user)
+        }
+    }
+
+    return nil
+}
+
+func deleteSFTPGroup() {
+	fmt.Print("Enter the group name to delete: ")
+	var groupName string
+	fmt.Scanln(&groupName)
+	if groupName == "" {
+		fmt.Println("Group name cannot be empty.")
+		return
+	}
+
+	fmt.Printf("Are you sure you want to delete the group %s? (y/n): ", groupName)
+	var confirm string
+	fmt.Scanln(&confirm)
+	if confirm != "y" {
+		fmt.Println("Group deletion cancelled.")
+		return
+	}
+	// delete users from group
+	err := deleteUsersFromGroup(groupName)
+	if err != nil {
+		fmt.Printf("Error deleting users from group: %v\n", err)
+	}
+	// delete group
+	err = deleteGroup(groupName)
+	if err != nil {
+		fmt.Printf("Failed to delete group %s: %v\n", groupName, err)
+	} else {
+		fmt.Printf("Group %s deleted successfully.\n", groupName)
+	}
+	// Remove  group  from the slice
+	indexToRemove := -1
+
+	for i, name := range Groups {
+		if name == groupName {
+			indexToRemove = i
+			break
+		}
+	}
+
+	if indexToRemove != -1 {
+		// Remove the element by slicing
+		Groups = append(Groups[:indexToRemove], Groups[indexToRemove+1:]...)
+	}
+
+	// Print the updated list of Groups
+	fmt.Println("Updated list of Groups:", Groups)
+}
+
+// Function to list all groups
+func listGroups() error {
+    cmd := exec.Command("getent", "group")
+    output, err := cmd.Output()
+    if err != nil {
+        return fmt.Errorf("failed to get groups: %w", err)
+    }
+
+    groups := strings.Split(string(output), "\n")
+    for _, groupName := range Groups {
+        for _, group := range groups {
+            if strings.Contains(group, groupName) {
+                fmt.Printf("Listing FTP users for group %s:\n", groupName)
+                listFTPUsers(groupName)
+                break
+            }
+        }
+    }
+    return nil
+}
+
+func customSftpGroup() error {
+	fmt.Print("Enter the group name: ")
+	var groupName string
+	fmt.Scanln(&groupName)
+	if groupName == "" {
+		return fmt.Errorf("group name cannot be empty")
+	}
+
+	fmt.Printf("Are you sure you want to create the group %s? (y/n): ", groupName)
+	var confirm string
+	fmt.Scanln(&confirm)
+	if confirm != "y" {
+		fmt.Println("Group creation cancelled.")
+		return nil
+	}
+
+	err := ensureGroup(groupName)
+	if err != nil {
+		return fmt.Errorf("failed to create group: %v", err)
+	}
+	Groups = append(Groups, groupName)
+	fmt.Println("Group created.")
+	return nil
+}
+
+func chooseGrouptoAdduser() string {
+	fmt.Print("\nEnter the group name to add user (blank for sftp (default)): ")
+	var groupName string
+	fmt.Scanln(&groupName)
+	exists , err := groupExists(groupName)
+	for !exists {
+		exists, err = groupExists(groupName)
+		if err != nil {
+			fmt.Printf("\nError : %s\n",err)
+		}
+		fmt.Println("Group does not exists.")
+		fmt.Print("\nEnter the group name to add user (blank for sftp (default)): ")
+		fmt.Scanln(&groupName)
+
+	}
+	if groupName == "" {
+		groupName = "sftp"
+	}
+	fmt.Printf("\nAdding user to group : %s\n", groupName)
+	return groupName
 }
