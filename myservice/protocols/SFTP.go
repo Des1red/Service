@@ -21,11 +21,11 @@ func Sftp() {
 1. Setup SFTP Server.
 2. Add User.
 3. Delete User.
-4. Stop FTP Server.
-5. List FTP Users.
+4. Stop SFTP Server.
+5. List SFTP Users.
 6. List SFTP groups.
-7. Add Sftp group.
-8. Delete Sftp group.
+7. Add SFTP group.
+8. Delete SFTP group.
 9. Show Server Status.
 10. Show Server Logs.
 0. Exit.
@@ -68,7 +68,7 @@ sftp >> `)
 		case 9:
 			showServerStatus()
 		case 10:
-			showlogs()
+			showLogs()
 		case 0:
 			fmt.Println("Exiting.")
 			return
@@ -119,37 +119,6 @@ func deleteSFTPUser() {
 	}
 
 	fmt.Printf("User %s deleted successfully.\n", user)
-}
-
-func removeSFTPConfig(username string) error {
-	input, err := os.ReadFile(sshdConfigPath)
-	if err != nil {
-		return fmt.Errorf("failed to read sshd_config: %w", err)
-	}
-
-	lines := strings.Split(string(input), "\n")
-	var newLines []string
-
-	for i := 0; i < len(lines); i++ {
-		if strings.Contains(lines[i], "Match User "+username) {
-			// Skip the lines related to the user
-			for i < len(lines) && !strings.HasPrefix(lines[i], "Match") {
-				i++
-			}
-			if i < len(lines) && strings.HasPrefix(lines[i], "Match") {
-				continue
-			}
-		}
-		newLines = append(newLines, lines[i])
-	}
-
-	output := strings.Join(newLines, "\n")
-	err = os.WriteFile(sshdConfigPath, []byte(output), 0644)
-	if err != nil {
-		return fmt.Errorf("failed to write to sshd_config: %w", err)
-	}
-
-	return nil
 }
 
 func stopSftp() {
@@ -434,55 +403,95 @@ func showServerStatus() {
 	}
 }
 
-func showlogs() {
-	cmd := exec.Command("sudo", "tail", "-f", "systemctl", "status", "ssh")
+func showLogs() {
+	cmd := exec.Command("sudo", "journalctl", "-u", "ssh", "-n", "100")
 	output, err := cmd.Output()
 	if err != nil {
-		fmt.Printf("Failed to get SSH service status: %v\n", err)
+		fmt.Printf("Failed to get SSH logs: %v\n", err)
 		return
 	}
 	fmt.Println(string(output))
 }
 
+// Function to remove SFTP configuration for a user
+func removeSFTPConfig(username string) error {
+	input, err := os.ReadFile(sshdConfigPath)
+	if err != nil {
+		return fmt.Errorf("failed to read sshd_config: %w", err)
+	}
+
+	lines := strings.Split(string(input), "\n")
+	var newLines []string
+
+	for i := 0; i < len(lines); i++ {
+		if strings.Contains(lines[i], "Match User "+username) {
+			// Skip the lines related to the user
+			for i < len(lines) && !strings.HasPrefix(lines[i], "Match") {
+				i++
+			}
+			continue // Skip the current "Match User" line
+		}
+		newLines = append(newLines, lines[i])
+	}
+
+	output := strings.Join(newLines, "\n")
+	err = os.WriteFile(sshdConfigPath, []byte(output), 0644)
+	if err != nil {
+		return fmt.Errorf("failed to write to sshd_config: %w", err)
+	}
+
+	return nil
+}
+
+// Function to delete a group
 func deleteGroup(groupName string) error {
 	cmd := exec.Command("sudo", "groupdel", groupName)
 	return cmd.Run()
 }
 
+// Function to delete users from a group and remove their SFTP configuration
 func deleteUsersFromGroup(groupName string) error {
-    // Get all users in the group
-    cmd := exec.Command("getent", "group", groupName)
-    output, err := cmd.Output()
-    if err != nil {
-        return fmt.Errorf("failed to get users in group %s: %v", groupName, err)
-    }
+	cmd := exec.Command("getent", "group", groupName)
+	output, err := cmd.Output()
+	if err != nil {
+		return fmt.Errorf("failed to get users in group %s: %v", groupName, err)
+	}
 
-    // Parse the output to extract user names
-    groupInfo := string(output)
-    if groupInfo == "" {
-        return fmt.Errorf("no users found in group %s", groupName)
-    }
-    parts := strings.Split(groupInfo, ":")
-    if len(parts) < 4 {
-        return fmt.Errorf("invalid group information for group %s", groupName)
-    }
-    users := strings.Split(parts[3], ",")
+	groupInfo := string(output)
+	if groupInfo == "" {
+		return fmt.Errorf("no users found in group %s", groupName)
+	}
 
-    // Delete each user from the group
-    for _, user := range users {
-        user = strings.TrimSpace(user)
-        cmd := exec.Command("userdel", user)
-        err := cmd.Run()
-        if err != nil {
-            fmt.Printf("Failed to delete user: %s. Error: %v\n", user, err)
-        } else {
-            fmt.Printf("Deleted User: %s\n", user)
-        }
-    }
+	parts := strings.Split(groupInfo, ":")
+	if len(parts) < 4 {
+		return fmt.Errorf("invalid group information for group %s", groupName)
+	}
+	users := strings.Split(parts[3], ",")
 
-    return nil
+	for _, user := range users {
+		user = strings.TrimSpace(user)
+		if user == "" {
+			continue
+		}
+
+		cmd := exec.Command("sudo", "userdel", user)
+		err := cmd.Run()
+		if err != nil {
+			fmt.Printf("Failed to delete user: %s. Error: %v\n", user, err)
+		} else {
+			fmt.Printf("Deleted User: %s\n", user)
+		}
+
+		err = removeSFTPConfig(user)
+		if err != nil {
+			fmt.Printf("Error removing SFTP config for user %s: %v\n", user, err)
+		}
+	}
+
+	return nil
 }
 
+// Function to delete a specified SFTP group and its users
 func deleteSFTPGroup() {
 	fmt.Print("Enter the group name to delete: ")
 	var groupName string
@@ -499,21 +508,21 @@ func deleteSFTPGroup() {
 		fmt.Println("Group deletion cancelled.")
 		return
 	}
-	// delete users from group
+
 	err := deleteUsersFromGroup(groupName)
 	if err != nil {
 		fmt.Printf("Error deleting users from group: %v\n", err)
 	}
-	// delete group
+
 	err = deleteGroup(groupName)
 	if err != nil {
 		fmt.Printf("Failed to delete group %s: %v\n", groupName, err)
 	} else {
 		fmt.Printf("Group %s deleted successfully.\n", groupName)
 	}
-	// Remove  group  from the slice
-	indexToRemove := -1
 
+	// Remove group from the slice (assuming Groups is a predefined slice of strings)
+	indexToRemove := -1
 	for i, name := range Groups {
 		if name == groupName {
 			indexToRemove = i
@@ -581,6 +590,9 @@ func chooseGrouptoAdduser() string {
 	fmt.Print("\nEnter the group name to add user (blank for sftp (default)): ")
 	var groupName string
 	fmt.Scanln(&groupName)
+	if groupName == "" {
+		groupName = "sftp"
+	}
 	exists , err := groupExists(groupName)
 	for !exists {
 		exists, err = groupExists(groupName)
@@ -590,10 +602,9 @@ func chooseGrouptoAdduser() string {
 		fmt.Println("Group does not exists.")
 		fmt.Print("\nEnter the group name to add user (blank for sftp (default)): ")
 		fmt.Scanln(&groupName)
-
-	}
-	if groupName == "" {
-		groupName = "sftp"
+		if groupName == "" {
+			groupName = "sftp"
+		}
 	}
 	fmt.Printf("\nAdding user to group : %s\n", groupName)
 	return groupName
