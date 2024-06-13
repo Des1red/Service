@@ -5,7 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-
+	"bytes"
 	"golang.org/x/crypto/ssh/terminal"
 )
 
@@ -22,8 +22,8 @@ func Sftp() {
 2. Add User.
 3. Delete User.
 4. Stop SFTP Server.
-5. List SFTP Users.
-6. List SFTP groups.
+5. List SFTP Users for specific group.
+6. List SFTP groups with users.
 7. Add SFTP group.
 8. Delete SFTP group.
 9. Show Server Status.
@@ -78,49 +78,6 @@ sftp >> `)
 	}
 }
 
-func deleteSFTPUser() {
-	fmt.Print("Enter the username to delete: ")
-	var user string
-	fmt.Scanln(&user)
-	if user == "" {
-		fmt.Println("Username cannot be empty.")
-		return
-	}
-
-	fmt.Printf("Are you sure you want to delete the user %s? (y/n): ", user)
-	var confirm string
-	fmt.Scanln(&confirm)
-	if confirm != "y" {
-		fmt.Println("User deletion cancelled.")
-		return
-	}
-
-	// Delete the user
-	cmd := exec.Command("sudo", "userdel", "-r", user)
-	err := cmd.Run()
-	if err != nil {
-		fmt.Printf("Failed to delete user %s: %v\n", user, err)
-		return
-	}
-
-	// Remove SFTP configuration for the user
-	err = removeSFTPConfig(user)
-	if err != nil {
-		fmt.Printf("Error removing SFTP config for user %s: %v\n", user, err)
-		return
-	}
-
-	// Restart SSH service to apply changes
-	cmd = exec.Command("sudo", "systemctl", "restart", "ssh")
-	err = cmd.Run()
-	if err != nil {
-		fmt.Printf("Failed to restart SSH service: %v\n", err)
-		return
-	}
-
-	fmt.Printf("User %s deleted successfully.\n", user)
-}
-
 func stopSftp() {
 	cmd := exec.Command("sudo", "systemctl", "stop", "ssh")
 	if err := cmd.Run(); err != nil {
@@ -147,20 +104,24 @@ func addSFTPUser() {
 				fmt.Printf("Failed to add user %s: %v\n", user, err)
 				return
 			}
-			if err := setUserPassword(user); err != nil {
-				fmt.Printf("Failed to set password for %s: %v\n", user, err)
-				return
-			}
+
 			group := chooseGrouptoAdduser()
 			if err := addUserToGroup(user, group); err != nil {
 				fmt.Printf("Failed to add user %s to sftp group: %v\n", user, err)
+				return
+			}
+			if err := createUsrDir(user); err != nil {
+				fmt.Printf("Failed to create directories for user %s: %v\n", user, err)
+				return
+			}
+			if err := generateSSHKey(user, group); err != nil {
+				fmt.Printf("Failed to generate SSH key for user %s: %v\n", user, err)
 				return
 			}
 			if err := addSFTPConfig(user); err != nil {
 				fmt.Printf("Error adding SFTP config for user %s: %v\n", user, err)
 				return
 			}
-			createUsrDir(user)
 			fmt.Println("FTP user and directories set up successfully.")
 			break
 		} else if confirm == "n" {
@@ -172,50 +133,134 @@ func addSFTPUser() {
 	}
 }
 
-func createUsrDir(user string) {
-	userHomeDir := fmt.Sprintf("/var/sftp/Users/%s", user)
-	ftpDir := fmt.Sprintf("%s/ftp", userHomeDir)
-	filesDir := fmt.Sprintf("%s/files", ftpDir)
 
-	// Create user's home directory with root ownership and no write permissions for others
-	if err := os.MkdirAll(userHomeDir, 0755); err != nil {
-		fmt.Printf("Failed to create home directory for user %s: %v\n", user, err)
-		return
-	}
-	if err := setDirOwnershipAndPermissions(userHomeDir, "root", "root"); err != nil {
-		fmt.Printf("Failed to set ownership and permissions for %s: %v\n", userHomeDir, err)
-		return
-	}
+func generateSSHKey(user, group string) error {
+    privateKeyFile := fmt.Sprintf("/var/sftp/Users/%s/.ssh/id_rsa_%s", user, user)
+    publicKeyFile := fmt.Sprintf("/var/sftp/Users/%s/.ssh/id_rsa_%s.pub", user, user)
+    sshDir := fmt.Sprintf("/var/sftp/Users/%s/.ssh", user)
+    authorizedKeysFile := fmt.Sprintf("%s/authorized_keys", sshDir)
 
-	// Create FTP and files directories with appropriate ownership
-	if err := os.MkdirAll(filesDir, 0755); err != nil {
-		fmt.Printf("Failed to create files directory for user %s: %v\n", user, err)
-		return
-	}
-	if err := setDirOwnershipAndPermissions(ftpDir, "nobody", "nogroup"); err != nil {
-		fmt.Printf("Failed to set ownership and permissions for %s: %v\n", ftpDir, err)
-		return
-	}
-	if err := setDirOwnershipAndPermissions(filesDir, user, user); err != nil {
-		fmt.Printf("Failed to set ownership and permissions for %s: %v\n", filesDir, err)
-		return
-	}
+    // Generate SSH key pair
+    cmd := exec.Command("ssh-keygen", "-t", "rsa", "-b", "2048", "-C", user, "-f", privateKeyFile, "-N", "")
+    var stdout, stderr bytes.Buffer
+    cmd.Stdout = &stdout
+    cmd.Stderr = &stderr
 
-	fmt.Println("\nFTP user directories set up successfully.")
+    if err := cmd.Run(); err != nil {
+        errMsg := fmt.Sprintf("failed to generate SSH key: %v\nstderr: %s", err, stderr.String())
+        return fmt.Errorf(errMsg)
+    }
+
+    fmt.Printf("SSH key generated successfully for user %s.\n", user)
+    fmt.Println("ssh-keygen output:", stdout.String())
+
+    // Append public key to authorized_keys file
+    pubKey, err := os.ReadFile(publicKeyFile)
+    if err != nil {
+        return fmt.Errorf("failed to read public key file: %v", err)
+    }
+
+    if err := os.WriteFile(authorizedKeysFile, pubKey, 0600); err != nil {
+        return fmt.Errorf("failed to write to authorized_keys: %v", err)
+    }
+
+    // Set ownership and permissions for authorized_keys
+    if err := setFileOwnershipAndPermissions(authorizedKeysFile, user, group); err != nil {
+        return fmt.Errorf("failed to set ownership and permissions for authorized_keys: %v", err)
+    }
+
+	// Set ownership and permissions for private key
+    if err := setFileOwnershipAndPermissions(privateKeyFile, user, group); err != nil {
+        return fmt.Errorf("failed to set ownership and permissions for authorized_keys: %v", err)
+    }
+
+	// Set ownership and permissions for public key
+    if err := setFileOwnershipAndPermissions(publicKeyFile, user, group); err != nil {
+        return fmt.Errorf("failed to set ownership and permissions for authorized_keys: %v", err)
+    }
+
+    return nil
+}
+
+func setFileOwnershipAndPermissions(file, owner, group string) error {
+    cmd := exec.Command("sudo", "chown", owner+":"+group, file)
+    if err := cmd.Run(); err != nil {
+        return fmt.Errorf("failed to set ownership for %s: %v", file, err)
+    }
+
+    cmd = exec.Command("sudo", "chmod", "600", file)
+    if err := cmd.Run(); err != nil {
+        return fmt.Errorf("failed to set permissions for %s: %v", file, err)
+    }
+
+    return nil
+}
+
+
+
+func createUsrDir(user string) error {
+    userHomeDir := fmt.Sprintf("/var/sftp/Users/%s", user)
+    ftpDir := fmt.Sprintf("%s/ftp", userHomeDir)
+    filesDir := fmt.Sprintf("%s/files", ftpDir)
+    sshDir := fmt.Sprintf("%s/.ssh", userHomeDir)
+
+    // Create user's home directory
+    err := os.MkdirAll(userHomeDir, 0755)
+    if err != nil {
+        return fmt.Errorf("failed to create home directory: %v", err)
+    }
+
+    err = setDirOwnershipAndPermissions(userHomeDir, "root", "root")
+    if err != nil {
+        return fmt.Errorf("failed to set ownership and permissions for home directory: %v", err)
+    }
+
+    // Create .ssh directory
+    err = os.MkdirAll(sshDir, 0700)
+    if err != nil {
+        return fmt.Errorf("failed to create .ssh directory: %v", err)
+    }
+
+    // Set proper ownership and permissions
+    err = setDirOwnershipAndPermissions(sshDir, user, user)
+    if err != nil {
+        return fmt.Errorf("failed to set ownership on .ssh directory: %v", err)
+    }
+
+    // Create FTP and files directories
+    err = os.MkdirAll(filesDir, 0755)
+    if err != nil {
+        return fmt.Errorf("failed to create files directory: %v", err)
+    }
+
+    err = setDirOwnershipAndPermissions(ftpDir, "nobody", "nogroup")
+    if err != nil {
+        return fmt.Errorf("failed to set ownership and permissions for ftp directory: %v", err)
+    }
+
+    err = setDirOwnershipAndPermissions(filesDir, user, user)
+    if err != nil {
+        return fmt.Errorf("failed to set ownership and permissions for files directory: %v", err)
+    }
+
+    fmt.Println("\nFTP user directories set up successfully.")
+    return nil
 }
 
 func setDirOwnershipAndPermissions(dir, owner, group string) error {
-	cmd := exec.Command("sudo", "chown", owner+":"+group, dir)
-	if err := cmd.Run(); err != nil {
-		return err
-	}
+    cmd := exec.Command("sudo", "chown", owner+":"+group, dir)
+    err := cmd.Run()
+    if err != nil {
+        return fmt.Errorf("failed to set ownership for %s: %v", dir, err)
+    }
 
-	cmd = exec.Command("sudo", "chmod", "755", dir)
-	if err := cmd.Run(); err != nil {
-		return err
-	}
+    cmd = exec.Command("sudo", "chmod", "755", dir)
+    err = cmd.Run()
+    if err != nil {
+        return fmt.Errorf("failed to set permissions for %s: %v", dir, err)
+    }
 
-	return nil
+    return nil
 }
 
 func setupSFTP() {
@@ -316,7 +361,7 @@ Match User %s
     X11Forwarding no
     AllowTcpForwarding no
     ForceCommand internal-sftp
-    PasswordAuthentication yes
+    PasswordAuthentication no
     PermitTunnel no
     AllowAgentForwarding no
     PermitOpen none
@@ -413,6 +458,75 @@ func showLogs() {
 	fmt.Println(string(output))
 }
 
+func deleteSFTPUser() {
+	fmt.Print("Enter the username to delete: ")
+	var user string
+	fmt.Scanln(&user)
+	if user == "" {
+		fmt.Println("Username cannot be empty.")
+		return
+	}
+
+	fmt.Printf("Are you sure you want to delete the user %s? (y/n): ", user)
+	var confirm string
+	fmt.Scanln(&confirm)
+	if confirm != "y" {
+		fmt.Println("User deletion cancelled.")
+		return
+	}
+
+	// Remove SSH key files for user
+	err := removeSSHKeys(user)
+	if err != nil {
+		fmt.Printf("Error removing SSH keys for user %s: %v\n", user, err)
+	} else {
+		fmt.Printf("SSH keys removed for user %s.\n", user)
+	}
+
+	// Remove SFTP configuration for the user
+	err = removeSFTPConfig(user)
+	if err != nil {
+		fmt.Printf("Error removing SFTP config for user %s: %v\n", user, err)
+		return
+	}
+
+	// Delete the user
+	cmd := exec.Command("sudo", "userdel", "-r", user)
+	err = cmd.Run()
+	if err != nil {
+		fmt.Printf("Failed to delete user %s: %v\n", user, err)
+		return
+	}
+
+	// Remove user's home directory
+	err = removeUsrDir(user)
+	if err != nil {
+		fmt.Printf("Error removing directory for user %s: %v\n", user, err)
+	} else {
+		fmt.Printf("Directory removed for user %s.\n", user)
+	}
+
+	// Restart SSH service to apply changes
+	cmd = exec.Command("sudo", "systemctl", "restart", "ssh")
+	err = cmd.Run()
+	if err != nil {
+		fmt.Printf("Failed to restart SSH service: %v\n", err)
+		return
+	}
+
+	fmt.Printf("User %s deleted successfully.\n", user)
+}
+
+func removeUsrDir(user string) error {
+	usrDir := fmt.Sprintf("/var/sftp/Users/%s", user)
+	cmd := exec.Command("sudo", "rm", "-rf", usrDir)
+	err := cmd.Run()
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 // Function to remove SFTP configuration for a user
 func removeSFTPConfig(username string) error {
 	input, err := os.ReadFile(sshdConfigPath)
@@ -443,14 +557,34 @@ func removeSFTPConfig(username string) error {
 	return nil
 }
 
-// Function to delete a group
-func deleteGroup(groupName string) error {
-	cmd := exec.Command("sudo", "groupdel", groupName)
-	return cmd.Run()
+func removeSSHKeys(user string) error {
+	sshDir := fmt.Sprintf("/var/sftp/Users/%s/.ssh", user)
+	privateKeyFile := fmt.Sprintf("%s/id_rsa_%s", sshDir, user)
+	publicKeyFile := fmt.Sprintf("%s/id_rsa_%s.pub", sshDir, user)
+	authorizedKeysFile := fmt.Sprintf("%s/authorized_keys", sshDir)
+
+	// Delete the private key file
+	if err := os.Remove(privateKeyFile); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to remove private key file: %v", err)
+	}
+
+	// Delete the public key file
+	if err := os.Remove(publicKeyFile); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to remove public key file: %v", err)
+	}
+
+	// Delete the authorized_keys file
+	if err := os.Remove(authorizedKeysFile); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to remove authorized_keys file: %v", err)
+	}
+
+	fmt.Printf("SSH keys removed successfully for user %s.\n", user)
+	return nil
 }
 
 // Function to delete users from a group and remove their SFTP configuration
 func deleteUsersFromGroup(groupName string) error {
+	// Get the list of users in the group
 	cmd := exec.Command("getent", "group", groupName)
 	output, err := cmd.Output()
 	if err != nil {
@@ -466,6 +600,7 @@ func deleteUsersFromGroup(groupName string) error {
 	if len(parts) < 4 {
 		return fmt.Errorf("invalid group information for group %s", groupName)
 	}
+
 	users := strings.Split(parts[3], ",")
 
 	for _, user := range users {
@@ -474,21 +609,49 @@ func deleteUsersFromGroup(groupName string) error {
 			continue
 		}
 
-		cmd := exec.Command("sudo", "userdel", user)
-		err := cmd.Run()
+		// Remove SSH keys and SFTP configuration first
+		err = removeSSHKeys(user)
 		if err != nil {
-			fmt.Printf("Failed to delete user: %s. Error: %v\n", user, err)
-		} else {
-			fmt.Printf("Deleted User: %s\n", user)
+			fmt.Printf("Error removing SSH keys for user %s: %v\n", user, err)
 		}
 
 		err = removeSFTPConfig(user)
 		if err != nil {
 			fmt.Printf("Error removing SFTP config for user %s: %v\n", user, err)
 		}
+
+		// Remove user's home directory
+		err = removeUsrDir(user)
+		if err != nil {
+			fmt.Printf("Error removing directory for user %s: %v\n", user, err)
+		} else {
+			fmt.Printf("Directory removed for user %s.\n", user)
+		}
+
+		// Delete the user
+		cmd = exec.Command("sudo", "userdel", "-r", user)
+		err = cmd.Run()
+		if err != nil {
+			fmt.Printf("Failed to delete user %s: %v\n", user, err)
+		} else {
+			fmt.Printf("Deleted user: %s\n", user)
+		}
+	}
+
+	// Restart SSH service to apply changes
+	cmd = exec.Command("sudo", "systemctl", "restart", "ssh")
+	err = cmd.Run()
+	if err != nil {
+		return fmt.Errorf("failed to restart SSH service: %v", err)
 	}
 
 	return nil
+}
+
+// Function to delete a group
+func deleteGroup(groupName string) error {
+	cmd := exec.Command("sudo", "groupdel", groupName)
+	return cmd.Run()
 }
 
 // Function to delete a specified SFTP group and its users
