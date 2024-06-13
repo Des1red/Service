@@ -140,8 +140,14 @@ func generateSSHKey(user, group string) error {
     sshDir := fmt.Sprintf("/var/sftp/Users/%s/.ssh", user)
     authorizedKeysFile := fmt.Sprintf("%s/authorized_keys", sshDir)
 
+	// ssh password
+	password, err := setSSHKeyPassword()
+	if err != nil {
+		fmt.Println("Error:", err)
+		return err
+	}
     // Generate SSH key pair
-    cmd := exec.Command("ssh-keygen", "-t", "rsa", "-b", "2048", "-C", user, "-f", privateKeyFile, "-N", "")
+    cmd := exec.Command("ssh-keygen", "-t", "rsa", "-b", "2048", "-C", user, "-f", privateKeyFile, "-N", password)
     var stdout, stderr bytes.Buffer
     cmd.Stdout = &stdout
     cmd.Stderr = &stderr
@@ -195,8 +201,6 @@ func setFileOwnershipAndPermissions(file, owner, group string) error {
 
     return nil
 }
-
-
 
 func createUsrDir(user string) error {
     userHomeDir := fmt.Sprintf("/var/sftp/Users/%s", user)
@@ -312,42 +316,30 @@ func listFTPUsers(group string) {
 	}
 }
 
-func setUserPassword(username string) error {
+// setSSHKeyPassword prompts the user to enter and confirm an SSH key password
+func setSSHKeyPassword() (string, error) {
 	var password, confirmPass string
 	for {
-		fmt.Print("Enter password for " + username + ": ")
+		fmt.Print("Enter passphrase for SSH key: ")
 		bytePassword, err := terminal.ReadPassword(int(os.Stdin.Fd()))
 		if err != nil {
-			return fmt.Errorf("error reading password: %w", err)
+			return "", fmt.Errorf("error reading password: %w", err)
 		}
 		password = strings.TrimSpace(string(bytePassword))
-		fmt.Print("\nConfirm Password: ")
+		fmt.Print("\nConfirm passphrase: ")
 		bytePassword, err = terminal.ReadPassword(int(os.Stdin.Fd()))
 		if err != nil {
-			return fmt.Errorf("error reading password: %w", err)
+			return "", fmt.Errorf("error reading password: %w", err)
 		}
 		confirmPass = strings.TrimSpace(string(bytePassword))
 		if password == confirmPass {
-			break
+			return password, nil
 		} else {
-			fmt.Println("Passwords don't match. Try again.")
+			fmt.Println("Passphrases don't match. Try again.")
 		}
 	}
-
-	cmd := exec.Command("sudo", "passwd", username)
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		return fmt.Errorf("error obtaining stdin pipe: %w", err)
-	}
-
-	go func() {
-		defer stdin.Close()
-		fmt.Fprintln(stdin, password)
-		fmt.Fprintln(stdin, password)
-	}()
-
-	return cmd.Run()
 }
+
 
 func addUserToGroup(username, groupName string) error {
 	cmd := exec.Command("sudo", "usermod", "-aG", groupName, username)
@@ -358,14 +350,16 @@ func addSFTPConfig(username string) error {
 	configLines := fmt.Sprintf(`
 Match User %s
     ChrootDirectory /var/sftp/Users/%s
-    X11Forwarding no
-    AllowTcpForwarding no
     ForceCommand internal-sftp
     PasswordAuthentication no
     PermitTunnel no
     AllowAgentForwarding no
+    AllowTcpForwarding no
+    X11Forwarding no
     PermitOpen none
-`, username, username)
+    PubkeyAuthentication yes
+    AuthorizedKeysFile /var/sftp/Users/%s/home/.ssh/authorized_keys
+`, username, username, username)
 
 	file, err := os.OpenFile(sshdConfigPath, os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {
@@ -479,9 +473,7 @@ func deleteSFTPUser() {
 	err := removeSSHKeys(user)
 	if err != nil {
 		fmt.Printf("Error removing SSH keys for user %s: %v\n", user, err)
-	} else {
-		fmt.Printf("SSH keys removed for user %s.\n", user)
-	}
+	} 
 
 	// Remove SFTP configuration for the user
 	err = removeSFTPConfig(user)
@@ -537,15 +529,23 @@ func removeSFTPConfig(username string) error {
 	lines := strings.Split(string(input), "\n")
 	var newLines []string
 
-	for i := 0; i < len(lines); i++ {
-		if strings.Contains(lines[i], "Match User "+username) {
-			// Skip the lines related to the user
-			for i < len(lines) && !strings.HasPrefix(lines[i], "Match") {
-				i++
-			}
-			continue // Skip the current "Match User" line
+	inUserBlock := false
+
+	for _, line := range lines {
+		if strings.HasPrefix(line, "Match User "+username) {
+			inUserBlock = true
 		}
-		newLines = append(newLines, lines[i])
+
+		if inUserBlock {
+			// Check if the current line is the start of another block
+			if strings.HasPrefix(line, "Match ") && !strings.HasPrefix(line, "Match User "+username) {
+				inUserBlock = false
+			}
+		}
+
+		if !inUserBlock {
+			newLines = append(newLines, line)
+		}
 	}
 
 	output := strings.Join(newLines, "\n")
@@ -553,6 +553,8 @@ func removeSFTPConfig(username string) error {
 	if err != nil {
 		return fmt.Errorf("failed to write to sshd_config: %w", err)
 	}
+
+	fmt.Println("SFTP config for user deleted.")
 
 	return nil
 }
@@ -749,26 +751,27 @@ func customSftpGroup() error {
 	return nil
 }
 
+// Function to prompt the user for a group name and validate its existence
 func chooseGrouptoAdduser() string {
-	fmt.Print("\nEnter the group name to add user (blank for sftp (default)): ")
-	var groupName string
-	fmt.Scanln(&groupName)
-	if groupName == "" {
-		groupName = "sftp"
-	}
-	exists , err := groupExists(groupName)
-	for !exists {
-		exists, err = groupExists(groupName)
-		if err != nil {
-			fmt.Printf("\nError : %s\n",err)
-		}
-		fmt.Println("Group does not exists.")
+	for {
 		fmt.Print("\nEnter the group name to add user (blank for sftp (default)): ")
+		var groupName string
 		fmt.Scanln(&groupName)
 		if groupName == "" {
 			groupName = "sftp"
 		}
+
+		exists, err := groupExists(groupName)
+		if err != nil {
+			fmt.Printf("\nError: %s\n", err)
+			continue
+		}
+
+		if exists {
+			fmt.Printf("\nAdding user to group: %s\n", groupName)
+			return groupName
+		}
+
+		fmt.Println("Group does not exist.")
 	}
-	fmt.Printf("\nAdding user to group : %s\n", groupName)
-	return groupName
 }
