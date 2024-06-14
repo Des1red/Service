@@ -15,6 +15,7 @@ var (
 )
 const sshdConfigPath = "/etc/ssh/sshd_config"
 
+// this is the menu for sftp
 func Sftp() {
 	for {
 		fmt.Print(`
@@ -78,6 +79,7 @@ sftp >> `)
 	}
 }
 
+// Stop the ssh service
 func stopSftp() {
 	cmd := exec.Command("sudo", "systemctl", "stop", "ssh")
 	if err := cmd.Run(); err != nil {
@@ -87,6 +89,7 @@ func stopSftp() {
 	}
 }
 
+// Add new sftp user
 func addSFTPUser() {
 	fmt.Print("New User name: ")
 	var user, confirm string
@@ -133,14 +136,42 @@ func addSFTPUser() {
 	}
 }
 
+// Prompts the user to enter and confirm an SSH key password
+func setSSHKeyPassword() (string, error) {
+	var password, confirmPass string
+	for {
+		fmt.Print("Enter passphrase for SSH key: ")
+		bytePassword, err := terminal.ReadPassword(int(os.Stdin.Fd()))
+		if err != nil {
+			return "", fmt.Errorf("error reading password: %w", err)
+		}
+		password = strings.TrimSpace(string(bytePassword))
+		fmt.Print("\nConfirm passphrase: ")
+		bytePassword, err = terminal.ReadPassword(int(os.Stdin.Fd()))
+		if err != nil {
+			return "", fmt.Errorf("error reading password: %w", err)
+		}
+		confirmPass = strings.TrimSpace(string(bytePassword))
+		if password == confirmPass {
+			return password, nil
+		} else {
+			fmt.Println("Passphrases don't match. Try again.")
+		}
+	}
+}
 
+// Generate the ssh key
 func generateSSHKey(user, group string) error {
-    privateKeyFile := fmt.Sprintf("/var/sftp/Users/%s/.ssh/id_rsa_%s", user, user)
-    publicKeyFile := fmt.Sprintf("/var/sftp/Users/%s/.ssh/id_rsa_%s.pub", user, user)
-    sshDir := fmt.Sprintf("/var/sftp/Users/%s/.ssh", user)
-    authorizedKeysFile := fmt.Sprintf("%s/authorized_keys", sshDir)
 
-	// ssh password
+	// Directories
+	userHomeDir := fmt.Sprintf("/var/sftp/Users/%s", user)
+	userChrootDir := fmt.Sprintf("%s/home/%s", userHomeDir, user)
+    sshDir := fmt.Sprintf("%s/.ssh", userChrootDir)
+	authorizedKeysFile := fmt.Sprintf("%s/authorized_keys", sshDir)
+	privateKeyFile := fmt.Sprintf("%s/id_rsa_%s", sshDir, user)
+    publicKeyFile := fmt.Sprintf("%s/id_rsa_%s.pub", sshDir, user)
+
+	// Ssh password
 	password, err := setSSHKeyPassword()
 	if err != nil {
 		fmt.Println("Error:", err)
@@ -171,30 +202,32 @@ func generateSSHKey(user, group string) error {
     }
 
     // Set ownership and permissions for authorized_keys
-    if err := setFileOwnershipAndPermissions(authorizedKeysFile, user, group); err != nil {
+	perm := "600"
+    if err := setFileOwnershipAndPermissions(authorizedKeysFile, user, group, perm); err != nil {
         return fmt.Errorf("failed to set ownership and permissions for authorized_keys: %v", err)
     }
 
 	// Set ownership and permissions for private key
-    if err := setFileOwnershipAndPermissions(privateKeyFile, user, group); err != nil {
+    if err := setFileOwnershipAndPermissions(privateKeyFile, user, group, perm); err != nil {
         return fmt.Errorf("failed to set ownership and permissions for authorized_keys: %v", err)
     }
 
 	// Set ownership and permissions for public key
-    if err := setFileOwnershipAndPermissions(publicKeyFile, user, group); err != nil {
+	perm = "644"
+    if err := setFileOwnershipAndPermissions(publicKeyFile, user, group, perm); err != nil {
         return fmt.Errorf("failed to set ownership and permissions for authorized_keys: %v", err)
     }
 
     return nil
 }
 
-func setFileOwnershipAndPermissions(file, owner, group string) error {
+func setFileOwnershipAndPermissions(file, owner, group, perm string) error {
     cmd := exec.Command("sudo", "chown", owner+":"+group, file)
     if err := cmd.Run(); err != nil {
         return fmt.Errorf("failed to set ownership for %s: %v", file, err)
     }
 
-    cmd = exec.Command("sudo", "chmod", "600", file)
+    cmd = exec.Command("sudo", "chmod", perm, file)
     if err := cmd.Run(); err != nil {
         return fmt.Errorf("failed to set permissions for %s: %v", file, err)
     }
@@ -202,11 +235,27 @@ func setFileOwnershipAndPermissions(file, owner, group string) error {
     return nil
 }
 
+func setDirOwnershipAndPermissions(dir, owner, group string, perm os.FileMode) error {
+    cmd := exec.Command("sudo", "chown", owner+":"+group, dir)
+    err := cmd.Run()
+    if err != nil {
+        return fmt.Errorf("failed to set ownership for %s: %v", dir, err)
+    }
+
+    err = os.Chmod(dir, perm)
+    if err != nil {
+        return fmt.Errorf("failed to set permissions for %s: %v", dir, err)
+    }
+
+    return nil
+}
+
 func createUsrDir(user string) error {
     userHomeDir := fmt.Sprintf("/var/sftp/Users/%s", user)
+    userChrootDir := fmt.Sprintf("%s/home/%s", userHomeDir, user)
     ftpDir := fmt.Sprintf("%s/ftp", userHomeDir)
     filesDir := fmt.Sprintf("%s/files", ftpDir)
-    sshDir := fmt.Sprintf("%s/.ssh", userHomeDir)
+    sshDir := fmt.Sprintf("%s/.ssh", userChrootDir)
 
     // Create user's home directory
     err := os.MkdirAll(userHomeDir, 0755)
@@ -214,9 +263,22 @@ func createUsrDir(user string) error {
         return fmt.Errorf("failed to create home directory: %v", err)
     }
 
-    err = setDirOwnershipAndPermissions(userHomeDir, "root", "root")
+    // Set ownership and permissions for user's home directory
+    err = setDirOwnershipAndPermissions(userHomeDir, "root", "root", 0755)
     if err != nil {
         return fmt.Errorf("failed to set ownership and permissions for home directory: %v", err)
+    }
+
+    // Create chroot home directory
+    err = os.MkdirAll(userChrootDir, 0755)
+    if err != nil {
+        return fmt.Errorf("failed to create chroot home directory: %v", err)
+    }
+
+    // Set ownership and permissions for chroot home directory
+    err = setDirOwnershipAndPermissions(userChrootDir, user, user, 0755)
+    if err != nil {
+        return fmt.Errorf("failed to set ownership and permissions for chroot home directory: %v", err)
     }
 
     // Create .ssh directory
@@ -225,10 +287,21 @@ func createUsrDir(user string) error {
         return fmt.Errorf("failed to create .ssh directory: %v", err)
     }
 
-    // Set proper ownership and permissions
-    err = setDirOwnershipAndPermissions(sshDir, user, user)
+    // Set ownership and permissions for .ssh directory
+    err = setDirOwnershipAndPermissions(sshDir, user, user, 0700)
     if err != nil {
         return fmt.Errorf("failed to set ownership on .ssh directory: %v", err)
+    }
+
+    // Ensure authorized_keys file exists with the correct permissions
+    authKeysFile := fmt.Sprintf("%s/authorized_keys", sshDir)
+    if _, err := os.Create(authKeysFile); err != nil {
+        return fmt.Errorf("failed to create authorized_keys file: %v", err)
+    }
+
+    err = setDirOwnershipAndPermissions(authKeysFile, user, user, 0600)
+    if err != nil {
+        return fmt.Errorf("failed to set ownership and permissions for authorized_keys file: %v", err)
     }
 
     // Create FTP and files directories
@@ -237,35 +310,21 @@ func createUsrDir(user string) error {
         return fmt.Errorf("failed to create files directory: %v", err)
     }
 
-    err = setDirOwnershipAndPermissions(ftpDir, "nobody", "nogroup")
+    // Set ownership and permissions for ftp and files directories
+    err = setDirOwnershipAndPermissions(ftpDir, "nobody", "nogroup", 0755)
     if err != nil {
         return fmt.Errorf("failed to set ownership and permissions for ftp directory: %v", err)
     }
 
-    err = setDirOwnershipAndPermissions(filesDir, user, user)
+    err = setDirOwnershipAndPermissions(filesDir, user, user, 0755)
     if err != nil {
         return fmt.Errorf("failed to set ownership and permissions for files directory: %v", err)
     }
 
-    fmt.Println("\nFTP user directories set up successfully.")
+    fmt.Println("FTP user directories set up successfully.")
     return nil
 }
 
-func setDirOwnershipAndPermissions(dir, owner, group string) error {
-    cmd := exec.Command("sudo", "chown", owner+":"+group, dir)
-    err := cmd.Run()
-    if err != nil {
-        return fmt.Errorf("failed to set ownership for %s: %v", dir, err)
-    }
-
-    cmd = exec.Command("sudo", "chmod", "755", dir)
-    err = cmd.Run()
-    if err != nil {
-        return fmt.Errorf("failed to set permissions for %s: %v", dir, err)
-    }
-
-    return nil
-}
 
 func setupSFTP() {
 	if !checkService("ssh") {
@@ -315,31 +374,6 @@ func listFTPUsers(group string) {
 		fmt.Println(user)
 	}
 }
-
-// setSSHKeyPassword prompts the user to enter and confirm an SSH key password
-func setSSHKeyPassword() (string, error) {
-	var password, confirmPass string
-	for {
-		fmt.Print("Enter passphrase for SSH key: ")
-		bytePassword, err := terminal.ReadPassword(int(os.Stdin.Fd()))
-		if err != nil {
-			return "", fmt.Errorf("error reading password: %w", err)
-		}
-		password = strings.TrimSpace(string(bytePassword))
-		fmt.Print("\nConfirm passphrase: ")
-		bytePassword, err = terminal.ReadPassword(int(os.Stdin.Fd()))
-		if err != nil {
-			return "", fmt.Errorf("error reading password: %w", err)
-		}
-		confirmPass = strings.TrimSpace(string(bytePassword))
-		if password == confirmPass {
-			return password, nil
-		} else {
-			fmt.Println("Passphrases don't match. Try again.")
-		}
-	}
-}
-
 
 func addUserToGroup(username, groupName string) error {
 	cmd := exec.Command("sudo", "usermod", "-aG", groupName, username)
