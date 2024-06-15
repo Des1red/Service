@@ -81,7 +81,7 @@ sftp >> `)
 
 // Stop the ssh service
 func stopSftp() {
-	cmd := exec.Command("sudo", "systemctl", "stop", "ssh")
+	cmd := exec.Command("systemctl", "stop", "ssh")
 	if err := cmd.Run(); err != nil {
 		fmt.Printf("Failed to stop SSH service: %v\n", err)
 	} else {
@@ -222,12 +222,12 @@ func generateSSHKey(user, group string) error {
 }
 
 func setFileOwnershipAndPermissions(file, owner, group, perm string) error {
-    cmd := exec.Command("sudo", "chown", owner+":"+group, file)
+    cmd := exec.Command("chown", owner+":"+group, file)
     if err := cmd.Run(); err != nil {
         return fmt.Errorf("failed to set ownership for %s: %v", file, err)
     }
 
-    cmd = exec.Command("sudo", "chmod", perm, file)
+    cmd = exec.Command("chmod", perm, file)
     if err := cmd.Run(); err != nil {
         return fmt.Errorf("failed to set permissions for %s: %v", file, err)
     }
@@ -236,7 +236,7 @@ func setFileOwnershipAndPermissions(file, owner, group, perm string) error {
 }
 
 func setDirOwnershipAndPermissions(dir, owner, group string, perm os.FileMode) error {
-    cmd := exec.Command("sudo", "chown", owner+":"+group, dir)
+    cmd := exec.Command("chown", owner+":"+group, dir)
     err := cmd.Run()
     if err != nil {
         return fmt.Errorf("failed to set ownership for %s: %v", dir, err)
@@ -253,7 +253,7 @@ func setDirOwnershipAndPermissions(dir, owner, group string, perm os.FileMode) e
 func createUsrDir(user string) error {
     userHomeDir := fmt.Sprintf("/var/sftp/Users/%s", user)
     userChrootDir := fmt.Sprintf("%s/home/%s", userHomeDir, user)
-    ftpDir := fmt.Sprintf("%s/ftp", userHomeDir)
+    ftpDir := fmt.Sprintf("%s/public", userHomeDir)
     filesDir := fmt.Sprintf("%s/files", ftpDir)
     sshDir := fmt.Sprintf("%s/.ssh", userChrootDir)
 
@@ -344,7 +344,7 @@ func setupSFTP() {
 }
 
 func createUser(username string) error {
-	cmd := exec.Command("sudo", "useradd", "-r", "-s", "/sbin/nologin", username)
+	cmd := exec.Command("useradd", "-r", "-s", "/sbin/nologin", username)
 	return cmd.Run()
 }
 
@@ -376,7 +376,7 @@ func listFTPUsers(group string) {
 }
 
 func addUserToGroup(username, groupName string) error {
-	cmd := exec.Command("sudo", "usermod", "-aG", groupName, username)
+	cmd := exec.Command("usermod", "-aG", groupName, username)
 	return cmd.Run()
 }
 
@@ -392,8 +392,8 @@ Match User %s
     X11Forwarding no
     PermitOpen none
     PubkeyAuthentication yes
-    AuthorizedKeysFile /var/sftp/Users/%s/home/.ssh/authorized_keys
-`, username, username, username)
+    AuthorizedKeysFile /var/sftp/Users/%s/home/%s/.ssh/authorized_keys
+`, username, username, username, username)
 
 	file, err := os.OpenFile(sshdConfigPath, os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {
@@ -405,7 +405,7 @@ Match User %s
 		return fmt.Errorf("failed to write to sshd_config: %w", err)
 	}
 
-	cmd := exec.Command("sudo", "systemctl", "restart", "ssh")
+	cmd := exec.Command("systemctl", "restart", "ssh")
 	return cmd.Run()
 }
 
@@ -433,7 +433,7 @@ func groupExists(groupName string) (bool, error) {
 }
 
 func createGroup(groupName string) error {
-	cmd := exec.Command("sudo", "groupadd", groupName)
+	cmd := exec.Command("groupadd", groupName)
 	return cmd.Run()
 }
 
@@ -457,11 +457,11 @@ func ensureDir(dirName string) error {
 }
 
 func setDirPermissions(dirName string) error {
-	cmd := exec.Command("sudo", "chown", "root:root", dirName)
+	cmd := exec.Command("chown", "root:root", dirName)
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("error setting ownership to root for %s: %w", dirName, err)
 	}
-	cmd = exec.Command("sudo", "chmod", "755", dirName)
+	cmd = exec.Command("chmod", "755", dirName)
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("error setting permission for %s: %w", dirName, err)
 	}
@@ -477,7 +477,7 @@ func showServerStatus() {
 }
 
 func showLogs() {
-	cmd := exec.Command("sudo", "journalctl", "-u", "ssh", "-n", "100")
+	cmd := exec.Command("journalctl", "-u", "ssh", "-n", "100")
 	output, err := cmd.Output()
 	if err != nil {
 		fmt.Printf("Failed to get SSH logs: %v\n", err)
@@ -517,7 +517,7 @@ func deleteSFTPUser() {
 	}
 
 	// Delete the user
-	cmd := exec.Command("sudo", "userdel", "-r", user)
+	cmd := exec.Command("userdel", "-r", user)
 	err = cmd.Run()
 	if err != nil {
 		fmt.Printf("Failed to delete user %s: %v\n", user, err)
@@ -533,7 +533,7 @@ func deleteSFTPUser() {
 	}
 
 	// Restart SSH service to apply changes
-	cmd = exec.Command("sudo", "systemctl", "restart", "ssh")
+	cmd = exec.Command("systemctl", "restart", "ssh")
 	err = cmd.Run()
 	if err != nil {
 		fmt.Printf("Failed to restart SSH service: %v\n", err)
@@ -545,7 +545,7 @@ func deleteSFTPUser() {
 
 func removeUsrDir(user string) error {
 	usrDir := fmt.Sprintf("/var/sftp/Users/%s", user)
-	cmd := exec.Command("sudo", "rm", "-rf", usrDir)
+	cmd := exec.Command("rm", "-rf", usrDir)
 	err := cmd.Run()
 	if err != nil {
 		return err
@@ -665,7 +665,7 @@ func deleteUsersFromGroup(groupName string) error {
 		}
 
 		// Delete the user
-		cmd = exec.Command("sudo", "userdel", "-r", user)
+		cmd = exec.Command("userdel", "-r", user)
 		err = cmd.Run()
 		if err != nil {
 			fmt.Printf("Failed to delete user %s: %v\n", user, err)
@@ -675,7 +675,7 @@ func deleteUsersFromGroup(groupName string) error {
 	}
 
 	// Restart SSH service to apply changes
-	cmd = exec.Command("sudo", "systemctl", "restart", "ssh")
+	cmd = exec.Command("systemctl", "restart", "ssh")
 	err = cmd.Run()
 	if err != nil {
 		return fmt.Errorf("failed to restart SSH service: %v", err)
@@ -686,7 +686,7 @@ func deleteUsersFromGroup(groupName string) error {
 
 // Function to delete a group
 func deleteGroup(groupName string) error {
-	cmd := exec.Command("sudo", "groupdel", groupName)
+	cmd := exec.Command("groupdel", groupName)
 	return cmd.Run()
 }
 
