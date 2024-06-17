@@ -12,6 +12,12 @@ import (
 	"golang.org/x/crypto/ssh/terminal"
 )
 
+type User struct {
+	Name    string
+	HomeDir string
+	Shell   string
+}
+
 func Ftps() {
     for {
         fmt.Print("\n1. Setup Ftp Server.\n")
@@ -166,12 +172,6 @@ func usersFromlist() {
 				for _, user := range users {
 					fmt.Println(user.Name)
 				}
-}
-
-type User struct {
-	Name    string
-	HomeDir string
-	Shell   string
 }
 
 func listFtpUsers() []User {

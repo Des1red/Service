@@ -79,6 +79,24 @@ sftp >> `)
 	}
 }
 
+// Setup the server
+func setupSFTP() {
+	if !checkService("ssh") {
+		fmt.Println("Starting SSH.")
+		startService("ssh")
+	} else {
+		fmt.Println("SSH is already active.")
+	}
+	if err := ensureGroup("sftp"); err != nil {
+		fmt.Println("Error ensuring group exists:", err)
+	} else {
+		fmt.Println("Group exists or was created successfully.")
+	}
+	if err := ensureDir("/var/sftp/Users"); err != nil {
+		fmt.Println("Error ensuring directory exists:", err)
+	}
+}
+
 // Stop the ssh service
 func stopSftp() {
 	cmd := exec.Command("systemctl", "stop", "ssh")
@@ -217,10 +235,11 @@ func generateSSHKey(user, group string) error {
     if err := setFileOwnershipAndPermissions(publicKeyFile, user, group, perm); err != nil {
         return fmt.Errorf("failed to set ownership and permissions for authorized_keys: %v", err)
     }
-
+	createPrivateKeyZip(userChrootDir, privateKeyFile)
     return nil
 }
 
+// Ownership and permissions for files
 func setFileOwnershipAndPermissions(file, owner, group, perm string) error {
     cmd := exec.Command("chown", owner+":"+group, file)
     if err := cmd.Run(); err != nil {
@@ -235,6 +254,7 @@ func setFileOwnershipAndPermissions(file, owner, group, perm string) error {
     return nil
 }
 
+// Ownership and permissions for directories
 func setDirOwnershipAndPermissions(dir, owner, group string, perm os.FileMode) error {
     cmd := exec.Command("chown", owner+":"+group, dir)
     err := cmd.Run()
@@ -250,6 +270,58 @@ func setDirOwnershipAndPermissions(dir, owner, group string, perm os.FileMode) e
     return nil
 }
 
+// Create Zip file with Users ssh priv key
+func createPrivateKeyZip(zipFilePath, privateKeyPath string) error {
+    // Open the private key file
+    privateKeyFile, err := os.Open(privateKeyPath)
+    if err != nil {
+        return fmt.Errorf("failed to open private key file: %v", err)
+    }
+    defer privateKeyFile.Close()
+
+    // Create a new zip archive
+    zipFile, err := os.Create(zipFilePath)
+    if err != nil {
+        return fmt.Errorf("failed to create zip file: %v", err)
+    }
+    defer zipFile.Close()
+
+    // Create a new zip writer
+    zipWriter := zip.NewWriter(zipFile)
+    defer zipWriter.Close()
+
+    // Get the file info
+    privateKeyInfo, err := privateKeyFile.Stat()
+    if err != nil {
+        return fmt.Errorf("failed to get private key file info: %v", err)
+    }
+
+    // Create a zip file header
+    privateKeyHeader, err := zip.FileInfoHeader(privateKeyInfo)
+    if err != nil {
+        return fmt.Errorf("failed to create zip file header: %v", err)
+    }
+
+    // Set the name of the file inside the zip archive
+    privateKeyHeader.Name = "private_key.pem"
+
+    // Create a writer for the file inside the zip archive
+    privateKeyWriter, err := zipWriter.CreateHeader(privateKeyHeader)
+    if err != nil {
+        return fmt.Errorf("failed to create zip file writer: %v", err)
+    }
+
+    // Copy the contents of the private key file to the zip archive
+    _, err = io.Copy(privateKeyWriter, privateKeyFile)
+    if err != nil {
+        return fmt.Errorf("failed to copy private key to zip file: %v", err)
+    }
+
+    fmt.Printf("Private key zip archive created at %s\n", zipFilePath)
+    return nil
+}
+
+// User creation
 func createUsrDir(user string) error {
     userHomeDir := fmt.Sprintf("/var/sftp/Users/%s", user)
     userChrootDir := fmt.Sprintf("%s/home/%s", userHomeDir, user)
@@ -325,24 +397,6 @@ func createUsrDir(user string) error {
     return nil
 }
 
-
-func setupSFTP() {
-	if !checkService("ssh") {
-		fmt.Println("Starting SSH.")
-		startService("ssh")
-	} else {
-		fmt.Println("SSH is already active.")
-	}
-	if err := ensureGroup("sftp"); err != nil {
-		fmt.Println("Error ensuring group exists:", err)
-	} else {
-		fmt.Println("Group exists or was created successfully.")
-	}
-	if err := ensureDir("/var/sftp/Users"); err != nil {
-		fmt.Println("Error ensuring directory exists:", err)
-	}
-}
-
 func createUser(username string) error {
 	cmd := exec.Command("useradd", "-r", "-s", "/sbin/nologin", username)
 	return cmd.Run()
@@ -380,6 +434,7 @@ func addUserToGroup(username, groupName string) error {
 	return cmd.Run()
 }
 
+// Create Match config for user created
 func addSFTPConfig(username string) error {
 	configLines := fmt.Sprintf(`
 Match User %s
@@ -409,6 +464,7 @@ Match User %s
 	return cmd.Run()
 }
 
+// check if group exists if not create it
 func ensureGroup(groupName string) error {
 	exists, err := groupExists(groupName)
 	if err != nil {
@@ -437,6 +493,7 @@ func createGroup(groupName string) error {
 	return cmd.Run()
 }
 
+// check if dir exists if not create it
 func ensureDir(dirName string) error {
 	if _, err := os.Stat(dirName); os.IsNotExist(err) {
 		if err := os.MkdirAll(dirName, 0755); err != nil {
@@ -468,6 +525,7 @@ func setDirPermissions(dirName string) error {
 	return nil
 }
 
+// check if services are up
 func showServerStatus() {
 	if !checkService("ssh") {
 		fmt.Println("\n SSH is down.")
@@ -476,6 +534,7 @@ func showServerStatus() {
 	}
 }
 
+// check the logs
 func showLogs() {
 	cmd := exec.Command("journalctl", "-u", "ssh", "-n", "100")
 	output, err := cmd.Output()
@@ -486,6 +545,7 @@ func showLogs() {
 	fmt.Println(string(output))
 }
 
+// delete user
 func deleteSFTPUser() {
 	fmt.Print("Enter the username to delete: ")
 	var user string
@@ -543,6 +603,7 @@ func deleteSFTPUser() {
 	fmt.Printf("User %s deleted successfully.\n", user)
 }
 
+// delete users directories
 func removeUsrDir(user string) error {
 	usrDir := fmt.Sprintf("/var/sftp/Users/%s", user)
 	cmd := exec.Command("rm", "-rf", usrDir)
@@ -760,6 +821,7 @@ func listGroups() error {
     return nil
 }
 
+// create new sftp group
 func customSftpGroup() error {
 	fmt.Print("Enter the group name: ")
 	var groupName string

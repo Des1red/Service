@@ -18,13 +18,14 @@ func menu() int {
          __/ |                                  
         |___/                                   
 	`)
-	fmt.Println("\n1. FTPS    2. SFTP    3. SSH    0. Exit")
+	fmt.Println("\n1. FTPS    2. SFTP    3. SSH    4.HTTPS    0. EXIT")
 
 	// Map of valid options
 	validOptions := map[int]bool{
 		1: true,
 		2: true,
 		3: true,
+		4: true,
 		0: true,
 		// Add more options here as needed
 	}
@@ -66,6 +67,10 @@ func main() {
 			protocols.SSH()
 		}
 
+		if service == 4 {
+			protocols.Https()
+		}
+		
 		if service == 0 {
 			break
 		}
