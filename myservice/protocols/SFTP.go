@@ -6,6 +6,10 @@ import (
 	"os/exec"
 	"strings"
 	"bytes"
+	"archive/zip"
+	"io"
+	"log"
+
 	"golang.org/x/crypto/ssh/terminal"
 )
 
@@ -95,6 +99,7 @@ func setupSFTP() {
 	if err := ensureDir("/var/sftp/Users"); err != nil {
 		fmt.Println("Error ensuring directory exists:", err)
 	}
+	InitializeDb()
 }
 
 // Stop the ssh service
@@ -144,6 +149,10 @@ func addSFTPUser() {
 				return
 			}
 			fmt.Println("FTP user and directories set up successfully.")
+
+			// Add user to databse
+			updatedatabase(user)
+
 			break
 		} else if confirm == "n" {
 			fmt.Print("New User name: ")
@@ -152,6 +161,28 @@ func addSFTPUser() {
 			fmt.Println("Type y or n")
 		}
 	}
+}
+
+func updatedatabase(user string) {
+    fmt.Println("Adding user to database.")
+    var databsepass string
+    fmt.Printf("\nDatabase %s password: ", user)
+    fmt.Scanln(&databsepass)
+
+    // Connect to the database
+    db, err := connectDB(dbPath)
+    if err != nil {
+        log.Fatalf("Failed to connect to database: %v", err)
+    }
+    defer db.Close()
+
+    // Add a new user
+    err = AddUserToDatabase(db, user, databsepass)
+    if err != nil {
+        log.Printf("Error adding user: %v", err)
+    } else {
+        fmt.Println("User added successfully")
+    }
 }
 
 // Prompts the user to enter and confirm an SSH key password
@@ -188,6 +219,8 @@ func generateSSHKey(user, group string) error {
 	authorizedKeysFile := fmt.Sprintf("%s/authorized_keys", sshDir)
 	privateKeyFile := fmt.Sprintf("%s/id_rsa_%s", sshDir, user)
     publicKeyFile := fmt.Sprintf("%s/id_rsa_%s.pub", sshDir, user)
+	zipFilePath := fmt.Sprintf("%s/private_key.zip", userChrootDir) // Path for the zip file
+
 
 	// Ssh password
 	password, err := setSSHKeyPassword()
@@ -235,8 +268,13 @@ func generateSSHKey(user, group string) error {
     if err := setFileOwnershipAndPermissions(publicKeyFile, user, group, perm); err != nil {
         return fmt.Errorf("failed to set ownership and permissions for authorized_keys: %v", err)
     }
-	createPrivateKeyZip(userChrootDir, privateKeyFile)
-    return nil
+
+	// Create the zip file
+    if err := createPrivateKeyZip(zipFilePath, privateKeyFile); err != nil {
+        return fmt.Errorf("failed to create zip file: %v", err)
+    }
+    
+	return nil
 }
 
 // Ownership and permissions for files
@@ -270,7 +308,6 @@ func setDirOwnershipAndPermissions(dir, owner, group string, perm os.FileMode) e
     return nil
 }
 
-// Create Zip file with Users ssh priv key
 func createPrivateKeyZip(zipFilePath, privateKeyPath string) error {
     // Open the private key file
     privateKeyFile, err := os.Open(privateKeyPath)
@@ -320,6 +357,7 @@ func createPrivateKeyZip(zipFilePath, privateKeyPath string) error {
     fmt.Printf("Private key zip archive created at %s\n", zipFilePath)
     return nil
 }
+
 
 // User creation
 func createUsrDir(user string) error {
@@ -563,6 +601,8 @@ func deleteSFTPUser() {
 		return
 	}
 
+	databaseremove(user)
+
 	// Remove SSH key files for user
 	err := removeSSHKeys(user)
 	if err != nil {
@@ -603,6 +643,26 @@ func deleteSFTPUser() {
 	fmt.Printf("User %s deleted successfully.\n", user)
 }
 
+// func to delete user from database
+func databaseremove(user string) {
+
+		fmt.Println("Removing user from database.")
+		// Connect to the database
+		db, err := connectDB(dbPath)
+		if err != nil {
+			log.Fatalf("Failed to connect to database: %v", err)
+		}
+		defer db.Close()
+	
+		// Remove the user
+		err = RemoveUserFromDatabase(db, user)
+		if err != nil {
+			log.Printf("Error removing user: %v", err)
+		} else {
+			fmt.Println("User removed successfully from database")
+		}
+	
+}
 // delete users directories
 func removeUsrDir(user string) error {
 	usrDir := fmt.Sprintf("/var/sftp/Users/%s", user)

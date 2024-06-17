@@ -9,8 +9,11 @@ import (
 	"html/template"
     "log"
     "net/http"
+    "path/filepath"
+    "database/sql"
 
     "github.com/gorilla/sessions"
+    "golang.org/x/crypto/bcrypt"
 )
 
 func createOpenSSLConfigHTTPS(filePath, ipAddress string) error {
@@ -139,29 +142,66 @@ func createSSLcertHTTPS() {
         }
     }
 }
-
 var (
-    // Key for session management (keep this secret in a real application)
-    key = []byte("super-secret-key")
-    store = sessions.NewCookieStore(key)
+    key           = []byte("super-secret-key")
+    store         = sessions.NewCookieStore(key)
+    sftpUsersDir  = "/var/sftp/Users/"
+    dbPath       = "/var/sftp/database.sql"
 )
 
-// User struct to simulate a user database
 type HttpsUser struct {
+    ID int
     Username string
     Password string
 }
 
-// Dummy user for demonstration
-var dummyUser = HttpsUser{
-    Username: "user1",
-    Password: "password1",
+func getUserByUsername(db *sql.DB, username string) (*HttpsUser, error) {
+    var user HttpsUser
+    err := db.QueryRow("SELECT id, username, password FROM users WHERE username = ?", username).Scan(&user.ID, &user.Username, &user.Password)
+    switch {
+    case err == sql.ErrNoRows:
+        return nil, nil
+    case err != nil:
+        return nil, err
+    }
+    return &user, nil
 }
 
-// loginHandler handles the login page requests.
+func verifyPassword(hashedPassword, password string) error {
+    return bcrypt.CompareHashAndPassword([]byte(hashedPassword), []byte(password))
+}
+
+func userExists(username, password string) bool {
+    db, err := connectDB(dbPath)
+    if err != nil {
+        log.Printf("Failed to connect to database: %v", err)
+        return false
+    }
+    defer db.Close()
+
+    user, err := getUserByUsername(db, username)
+    if err != nil {
+        log.Printf("Failed to get user by username: %v", err)
+        return false
+    }
+    if user == nil {
+        return false
+    }
+
+    if err := verifyPassword(user.Password, password); err != nil {
+        return false
+    }
+    return true
+}
+
 func loginHandler(w http.ResponseWriter, r *http.Request) {
     if r.Method == http.MethodGet {
-        tmpl, _ := template.ParseFiles("templates/login.html")
+        tmpl, err := template.ParseFiles("templates/login.html")
+        if err != nil {
+            log.Printf("Error parsing template: %v", err)
+            http.Error(w, "Internal server error", http.StatusInternalServerError)
+            return
+        }
         tmpl.Execute(w, nil)
         return
     }
@@ -170,7 +210,7 @@ func loginHandler(w http.ResponseWriter, r *http.Request) {
         username := r.FormValue("username")
         password := r.FormValue("password")
 
-        if username == dummyUser.Username && password == dummyUser.Password {
+        if userExists(username, password) {
             session, _ := store.Get(r, "session")
             session.Values["authenticated"] = true
             session.Values["username"] = username
@@ -183,7 +223,6 @@ func loginHandler(w http.ResponseWriter, r *http.Request) {
     }
 }
 
-// userHandler handles requests to the user-specific page.
 func userHandler(w http.ResponseWriter, r *http.Request) {
     session, _ := store.Get(r, "session")
     if auth, ok := session.Values["authenticated"].(bool); !ok || !auth {
@@ -192,16 +231,24 @@ func userHandler(w http.ResponseWriter, r *http.Request) {
     }
 
     username, _ := session.Values["username"].(string)
-    fmt.Fprintf(w, "Welcome to your folder, %s!", username)
+    fmt.Fprintf(w, "Welcome to your folder, %s!\n", username)
+
+    zipFilePath := filepath.Join(sftpUsersDir, username, "home", username, "private_key.zip")
+    if _, err := os.Stat(zipFilePath); os.IsNotExist(err) {
+        http.Error(w, "File not found", http.StatusNotFound)
+        return
+    }
+
+    w.Header().Set("Content-Disposition", "attachment; filename=private_key.zip")
+    w.Header().Set("Content-Type", "application/zip")
+    http.ServeFile(w, r, zipFilePath)
 }
 
-// startHTTPSServer starts an HTTPS server.
 func startHTTPSServer() {
-    http.HandleFunc("/", helloHandler)
-
     certFile := "https_cert.pem"
     keyFile := "https_key.pem"
 
+    http.HandleFunc("/", helloHandler)
     http.HandleFunc("/login", loginHandler)
     http.HandleFunc("/user/", userHandler)
 
@@ -209,13 +256,27 @@ func startHTTPSServer() {
     log.Fatal(http.ListenAndServeTLS(":8080", certFile, keyFile, nil))
 }
 
-// Https initializes the SSL certificate creation and starts the HTTPS server.
-func Https() {
-    createSSLcertHTTPS()
-    startHTTPSServer()
-}
-
-// helloHandler handles the root URL requests.
 func helloHandler(w http.ResponseWriter, r *http.Request) {
     fmt.Fprintf(w, "Hello, HTTPS!")
+}
+
+func Https() {
+    db, err := connectDB(dbPath)
+    if err != nil {
+        log.Fatalf("Failed to connect to database: %v", err)
+    }
+    defer db.Close()
+
+    createTableSQL := `CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT UNIQUE NOT NULL,
+        password TEXT NOT NULL
+    );`
+    _, err = db.Exec(createTableSQL)
+    if err != nil {
+        log.Fatalf("Failed to create table: %v", err)
+    }
+
+    createSSLcertHTTPS()
+    startHTTPSServer()
 }
