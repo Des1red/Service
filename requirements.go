@@ -7,7 +7,7 @@ import (
 
 // installServices installs the necessary services
 func main() {
-	services := []string{"ssh", "lftp", "ftp", "fail2ban", "ufw"}
+	services := []string{"ssh", "lftp", "ftp", "fail2ban", "ufw", "sqlite3 libsqlite3-dev"}
 
 	for _, service := range services {
 		err := installService(service)

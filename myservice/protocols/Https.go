@@ -11,6 +11,8 @@ import (
     "net/http"
     "path/filepath"
     "database/sql"
+    "os/signal"
+    "syscall"
 
     "github.com/gorilla/sessions"
     "golang.org/x/crypto/bcrypt"
@@ -261,22 +263,30 @@ func helloHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func Https() {
+    // Connect to the database
     db, err := connectDB(dbPath)
     if err != nil {
         log.Fatalf("Failed to connect to database: %v", err)
     }
     defer db.Close()
-
-    createTableSQL := `CREATE TABLE IF NOT EXISTS users (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        username TEXT UNIQUE NOT NULL,
-        password TEXT NOT NULL
-    );`
-    _, err = db.Exec(createTableSQL)
-    if err != nil {
-        log.Fatalf("Failed to create table: %v", err)
-    }
-
+    
+    // Create SSL certificate for HTTPS server
     createSSLcertHTTPS()
-    startHTTPSServer()
+
+    // Start HTTPS server
+    go startHTTPSServer()
+
+    // Handle interrupt signals (Ctrl+C) to gracefully shutdown
+    interrupt := make(chan os.Signal, 1)
+    signal.Notify(interrupt, os.Interrupt, syscall.SIGTERM)
+
+    // Wait for interrupt signal
+    <-interrupt
+
+    log.Println("Received interrupt signal. Shutting down gracefully...")
+
+    // Perform any cleanup operations here if needed
+    // For example, you can close connections, release resources, etc.
+
+    log.Println("Shutdown complete.")
 }

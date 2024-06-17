@@ -165,9 +165,30 @@ func addSFTPUser() {
 
 func updatedatabase(user string) {
     fmt.Println("Adding user to database.")
-    var databsepass string
-    fmt.Printf("\nDatabase %s password: ", user)
-    fmt.Scanln(&databsepass)
+    var databsepass, confirmpass string
+    for {
+		//prompt for pass
+		fmt.Print("Enter Database password for " + user + ": ")
+		bytePassword, err := terminalReadPassword()
+		if err != nil {
+			fmt.Println("Error reading password:", err)
+			return
+		}
+		databsepass = strings.TrimSpace(string(bytePassword))
+		fmt.Print("Confirm Password: ")
+		// retype pass to confirm
+		bytePassword, err = terminalReadPassword()
+		if err != nil {
+			fmt.Println("Error reading password:", err)
+			return
+		}
+		confirmpass = strings.TrimSpace(string(bytePassword))
+		if databsepass == confirmpass {
+			break
+		} else {
+			fmt.Println("Passwords don't match. Try again.")
+		}
+	}
 
     // Connect to the database
     db, err := connectDB(dbPath)
