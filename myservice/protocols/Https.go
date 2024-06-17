@@ -13,6 +13,9 @@ import (
     "database/sql"
     "os/signal"
     "syscall"
+    "context"
+    "time"
+    "sync"
 
     "github.com/gorilla/sessions"
     "golang.org/x/crypto/bcrypt"
@@ -246,16 +249,32 @@ func userHandler(w http.ResponseWriter, r *http.Request) {
     http.ServeFile(w, r, zipFilePath)
 }
 
-func startHTTPSServer() {
+// ServeMux to handle route registration and prevent conflicts
+var mux *http.ServeMux
+var once sync.Once
+
+func init() {
+    mux = http.NewServeMux()
+}
+
+func startHTTPSServer(srv *http.Server) {
     certFile := "https_cert.pem"
     keyFile := "https_key.pem"
 
-    http.HandleFunc("/", helloHandler)
-    http.HandleFunc("/login", loginHandler)
-    http.HandleFunc("/user/", userHandler)
+    // Register routes in a thread-safe way
+    once.Do(func() {
+        mux.HandleFunc("/", helloHandler)
+        mux.HandleFunc("/login", loginHandler)
+        mux.HandleFunc("/user/", userHandler)
+    })
 
-    fmt.Println("Starting server at https://localhost:8080")
-    log.Fatal(http.ListenAndServeTLS(":8080", certFile, keyFile, nil))
+    srv.Handler = mux
+
+    // Start HTTPS server
+    log.Println("Starting HTTPS server...")
+    if err := srv.ListenAndServeTLS(certFile, keyFile); err != nil && err != http.ErrServerClosed {
+        log.Fatalf("ListenAndServeTLS failed: %v", err)
+    }
 }
 
 func helloHandler(w http.ResponseWriter, r *http.Request) {
@@ -269,12 +288,17 @@ func Https() {
         log.Fatalf("Failed to connect to database: %v", err)
     }
     defer db.Close()
-    
+
     // Create SSL certificate for HTTPS server
     createSSLcertHTTPS()
 
-    // Start HTTPS server
-    go startHTTPSServer()
+    // Create a new HTTP server
+    srv := &http.Server{
+        Addr: ":443",
+    }
+
+    // Start the server in a goroutine
+    go startHTTPSServer(srv)
 
     // Handle interrupt signals (Ctrl+C) to gracefully shutdown
     interrupt := make(chan os.Signal, 1)
@@ -285,8 +309,17 @@ func Https() {
 
     log.Println("Received interrupt signal. Shutting down gracefully...")
 
+    // Create a context with a timeout for the shutdown process
+    ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+    defer cancel()
+
     // Perform any cleanup operations here if needed
     // For example, you can close connections, release resources, etc.
 
-    log.Println("Shutdown complete.")
+    // Gracefully shutdown the server
+    if err := srv.Shutdown(ctx); err != nil {
+        log.Fatalf("Server forced to shutdown: %v", err)
+    }
+
+    log.Println("Server exiting")
 }
