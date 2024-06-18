@@ -47,7 +47,7 @@ sftp >> `)
 		case 3:
 			deleteSFTPUser()
 		case 4:
-			stopSftp()
+			SftpStop()
 		case 5:
 			fmt.Print("\nGroup : ")
 			var group string
@@ -103,13 +103,33 @@ func setupSFTP() {
 }
 
 // Stop the ssh service
-func stopSftp() {
-	cmd := exec.Command("systemctl", "stop", "ssh")
-	if err := cmd.Run(); err != nil {
-		fmt.Printf("Failed to stop SSH service: %v\n", err)
+func SftpStop() {
+	var ftp,ufw bool
+	if !checkService("ssh") {
+		fmt.Println("ssh is not running.")
+		ftp = false
 	} else {
-		fmt.Println("SSH service stopped successfully.")
+		ftp = true
 	}
+
+	if !checkService("ufw") {
+		fmt.Println("ufw is not running.")
+		ufw = false
+	} else {
+		ufw = true
+	}
+
+	if ftp == true {
+		fmt.Println("Stopping SFTP server...")
+		stopService("ssh")
+	}
+	if ufw == true {
+		fmt.Println("Closing firewall ports...")
+			closePorts("22/tcp")
+		}
+
+		//stopService("ufw") //in case other services are running it is recommended to not shut down ufw
+	
 }
 
 // Add new sftp user
