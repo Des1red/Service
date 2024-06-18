@@ -109,7 +109,15 @@ func SftpStop() {
 		fmt.Println("ssh is not running.")
 		ftp = false
 	} else {
-		ftp = true
+		// Check if SSH is running for ssh server by verifying the existence of the file
+		if _, err := os.Stat("/var/run/ssh_running"); os.IsNotExist(err) {
+			fmt.Println("SSH is not being used by admin , stopping SSH service...")
+			ftp = true
+		} else {
+			fmt.Println("SSH is being used by admin ssh, not stopping SSH service.")
+			ftp = false
+		}
+		
 	}
 
 	if !checkService("ufw") {

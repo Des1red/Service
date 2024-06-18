@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
+	"syscall"
+	"sync"
 )
 
 // SSH function provides a menu for managing SSH and Fail2Ban services
@@ -11,6 +14,7 @@ func SSH() {
 	for {
 		fmt.Print("\n1. Setup SSH and Fail2Ban services.")
 		fmt.Print("\n2. Stop SSH and Fail2Ban services.")
+		fmt.Print("\n3. Show ban list.")
 		fmt.Print("\n4. Unban IP.")
 		fmt.Print("\n0. Exit\n")
 		fmt.Print("\nOpenSSH >> ")
@@ -23,6 +27,8 @@ func SSH() {
 			startServices()
 		case 2:
 			stopServices()
+		case 3:
+			showbannedIps()
 		case 4:
 			unbanIp()
 		case 0:
@@ -34,68 +40,77 @@ func SSH() {
 	}
 }
 
+// Global variables for synchronization
+var (
+    cleanupWG sync.WaitGroup
+    sshRunning bool
+)
+
 // startServices starts SSH and Fail2Ban services
 func startServices() {
-	startSSH()
-	jailConf()
-	startFail2Ban()
+    startService("ssh")
+    jailConf()
+    startService("fail2ban")
+
+    // Create a temp file to indicate that SSH is running
+    createTempFile("/var/run/ssh_running")
+    sshRunning = true
+
+    // Start a goroutine to handle signals
+    cleanupWG.Add(1)
+    go signalHandler()
 }
 
 // stopServices stops SSH and Fail2Ban services
 func stopServices() {
-	stopSSH()
-	stopFail2Ban()
+    if sshRunning {
+        // Clean up by removing the file
+        removeTempFile("/var/run/ssh_running")
+        sshRunning = false
+    }
+
+    // Stop services (for example, graceful shutdown)
+    stopService("ssh")
+    stopService("fail2ban")
+
+    // Signal completion of cleanup
+    cleanupWG.Done()
 }
 
-// startSSH starts the SSH service using UFW
-func startSSH() {
-	err := runCommand("ufw", "allow", "ssh")
-	if err != nil {
-		fmt.Printf("\nFailed to start SSH service, error: %s\n", err)
-		return
-	}
-	fmt.Println("\nSSH service started successfully.")
+// signalHandler handles SIGINT and SIGTERM signals
+func signalHandler() {
+    defer cleanupWG.Done()
+
+    sig := make(chan os.Signal, 1)
+    signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+    <-sig
+
+    // Stop services and clean up
+    stopServices()
 }
 
-// stopSSH stops the SSH service using UFW
-func stopSSH() {
-	err := runCommand("ufw", "deny", "ssh")
-	if err != nil {
-		fmt.Printf("\nFailed to stop SSH service, error: %s\n", err)
-		return
-	}
-	fmt.Println("\nSSH service stopped successfully.")
+// createTempFile creates a temporary file
+func createTempFile(filePath string) {
+    file, err := os.Create(filePath)
+    if err != nil {
+        panic(err)
+    }
+    defer file.Close()
+    fmt.Printf("Created temporary file %s\n", filePath)
 }
 
-// startFail2Ban starts the Fail2Ban service and enables it
-func startFail2Ban() {
-	err := runCommand("systemctl", "start", "fail2ban")
-	if err != nil {
-		fmt.Printf("\nFailed to start Fail2Ban service, error: %s\n", err)
-		return
-	}
-
-	// status 
-	err = runCommand("systemctl", "status", "fail2ban")
-	if err != nil {
-		fmt.Printf("\nFailed to show Fail2Ban service status, error: %s\n", err)
-	}
-
-	fmt.Println("\nFail2Ban service started successfully.")
+// removeTempFile removes a temporary file
+func removeTempFile(filePath string) {
+    err := os.Remove(filePath)
+    if err != nil {
+        fmt.Printf("Error removing file %s: %v\n", filePath, err)
+    } else {
+        fmt.Printf("Removed temporary file %s\n", filePath)
+    }
 }
 
-// stopFail2Ban stops the Fail2Ban service
-func stopFail2Ban() {
-	err := runCommand("systemctl", "stop", "fail2ban")
-	if err != nil {
-		fmt.Printf("\nFailed to stop Fail2Ban service, error: %s\n", err)
-		return
-	}
-	fmt.Println("\nFail2Ban service stopped successfully.")
-}
+func showbannedIps() {
 
-// unbanIp unbans a specific IP address
-func unbanIp() {
 	fmt.Println("\nBanned IPs --> ")
 
 	// Show the status of Fail2Ban including banned IPs
@@ -105,6 +120,11 @@ func unbanIp() {
 		return
 	}
 
+}
+
+// unbanIp unbans a specific IP address
+func unbanIp() {
+	
 	// Read the IP address to unban
 	var unban string
 	fmt.Printf("\nUnban IP: ")
@@ -114,7 +134,7 @@ func unbanIp() {
 	jail := "sshd"
 
 	// Execute the command to unban the IP
-	err = runCommand("fail2ban-client", "set", jail, "unbanip", unban)
+	err := runCommand("fail2ban-client", "set", jail, "unbanip", unban)
 	if err != nil {
 		fmt.Printf("\nFailed to unban IP: %s\n", unban)
 	} else {
