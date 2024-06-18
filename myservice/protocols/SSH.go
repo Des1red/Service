@@ -86,7 +86,7 @@ func startServices() {
     jailConf()
 
     // Start Fail2Ban service
-   startService("fail2ban")
+   	startService("fail2ban")
 
     // Start a goroutine to handle signals for cleanup
     cleanupWG.Add(1)
