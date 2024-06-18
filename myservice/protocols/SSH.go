@@ -48,22 +48,7 @@ var (
     sshRunning bool
 )
 
-func createConditionFile() error {
-	file, err := os.Create(conditionFilePath)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-	return nil
-}
 
-func removeConditionFile() error {
-	err := os.Remove(conditionFilePath)
-	if err != nil {
-		return err
-	}
-	return nil
-}
 
 // startServices starts SSH and Fail2Ban services
 func startServices() {
@@ -111,13 +96,6 @@ func startServices() {
 
 /// stopServices stops SSH and Fail2Ban services
 func stopServices() {
-
-    // Remove condition file for root acccess if it exists
-    if err := removeConditionFile(); err != nil {
-        fmt.Printf("Error removing condition file: %v\n", err)
-    } else {
-        fmt.Println("Condition file removed.")
-    }
 
     // Remove temporary SSH running file if SSH was running
     if sshRunning {
