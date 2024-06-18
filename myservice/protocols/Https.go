@@ -273,7 +273,9 @@ func startHTTPSServer(srv *http.Server) {
     // Start HTTPS server
     log.Println("Starting HTTPS server...")
     if err := srv.ListenAndServeTLS(certFile, keyFile); err != nil && err != http.ErrServerClosed {
+        closePorts("443/tcp")
         log.Fatalf("ListenAndServeTLS failed: %v", err)
+
     }
 }
 
@@ -291,7 +293,9 @@ func Https() {
 
     // Create SSL certificate for HTTPS server
     createSSLcertHTTPS()
-
+    
+    // make sure firewall is not blocking the ports
+    openPorts("443/tcp")
     // Create a new HTTP server
     srv := &http.Server{
         Addr: ":443",
@@ -313,8 +317,7 @@ func Https() {
     ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
     defer cancel()
 
-    // Perform any cleanup operations here if needed
-    // For example, you can close connections, release resources, etc.
+    closePorts("443/tcp")
 
     // Gracefully shutdown the server
     if err := srv.Shutdown(ctx); err != nil {
