@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os/exec"
 	"syscall"
-	
+
 	"golang.org/x/crypto/ssh/terminal"
 )
 
@@ -59,6 +59,23 @@ func stopService(serviceName string) {
 		fmt.Printf("Failed to stop service %s: %v\n", serviceName, err)
 	} else {
 		fmt.Printf("Service %s stopped successfully.\n", serviceName)
+	}
+}
+
+func SetUpService(service string) {
+	if !checkService(service) {
+		startService(service)
+	} else {
+		fmt.Printf("Service %s already up and running.\n", service)
+		fmt.Println("Restarting service...")
+		cmd := exec.Command("systemctl", "restart", service)
+		err := cmd.Run()
+		if err != nil {
+			fmt.Printf("Could not restart service: %s\n", err)
+			return
+		} else {
+			fmt.Println("Service restart successful.")
+		}
 	}
 }
 

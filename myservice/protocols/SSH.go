@@ -7,6 +7,8 @@ import (
 	"os/signal"
 	"syscall"
 	"sync"
+	"strings"
+	"bufio"
 )
 
 // SSH function provides a menu for managing SSH and Fail2Ban services
@@ -46,32 +48,116 @@ var (
     sshRunning bool
 )
 
+func createConditionFile() error {
+	file, err := os.Create(conditionFilePath)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	return nil
+}
+
+func removeConditionFile() error {
+	err := os.Remove(conditionFilePath)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 // startServices starts SSH and Fail2Ban services
 func startServices() {
-    startService("ssh")
-    jailConf()
-    startService("fail2ban")
 
-    // Create a temp file to indicate that SSH is running
+	// Change PermitRootLogin to "no"
+			err := changePermitRootLogin("yes")
+			if err != nil {
+				fmt.Println("Error:", err)
+				return
+			}
+			fmt.Println("PermitRootLogin changed successfully!")
+		
+        // Find permit root login 
+			permitRootLogin, err := findPermitRootLogin()
+			if err != nil {
+				fmt.Println("Error:", err)
+				return
+			}
+			fmt.Println("PermitRootLogin:", permitRootLogin)
+
+    // Reload SSH daemon
+    if err := reloadSSHD(); err != nil {
+        fmt.Printf("Error reloading sshd: %v\n", err)
+        return
+    }
+    fmt.Println("SSH daemon reloaded.")
+
+    // Start SSH service
+    startService("ssh")
+	// Create a temp file to indicate that SSH is running
     createTempFile("/var/run/ssh_running")
     sshRunning = true
 
-    // Start a goroutine to handle signals
+    // Configure Fail2Ban
+    jailConf()
+
+    // Start Fail2Ban service
+   startService("fail2ban")
+
+    // Start a goroutine to handle signals for cleanup
     cleanupWG.Add(1)
     go signalHandler()
 }
 
-// stopServices stops SSH and Fail2Ban services
+
+/// stopServices stops SSH and Fail2Ban services
 func stopServices() {
+
+    // Remove condition file for root acccess if it exists
+    if err := removeConditionFile(); err != nil {
+        fmt.Printf("Error removing condition file: %v\n", err)
+    } else {
+        fmt.Println("Condition file removed.")
+    }
+
+    // Remove temporary SSH running file if SSH was running
     if sshRunning {
-        // Clean up by removing the file
         removeTempFile("/var/run/ssh_running")
         sshRunning = false
     }
 
-    // Stop services (for example, graceful shutdown)
-    stopService("ssh")
+	// change and print new permit loggin 
+	//Change PermitRootLogin to "no"
+	err := changePermitRootLogin("no")
+	if err != nil {
+		fmt.Println("Error:", err)
+		return
+	}
+	fmt.Println("PermitRootLogin changed successfully!")
+
+	// Find permit root login 
+	permitRootLogin, err := findPermitRootLogin()
+	if err != nil {
+		fmt.Println("Error:", err)
+		return
+	}
+	fmt.Println("PermitRootLogin:", permitRootLogin)
+	
+
+    // Stop Fail2Ban service
     stopService("fail2ban")
+
+	fmt.Print("\n Stop ssh ? ")
+	var choice string
+	for {
+		fmt.Scanln(&choice)
+		if choice == "y" {
+			stopService("ssh")
+			break
+		} else if choice == "n" {
+			break
+		}
+		fmt.Println("Type y/n")
+	}
 
     // Signal completion of cleanup
     cleanupWG.Done()
@@ -216,5 +302,88 @@ func runCommand(command string, args ...string) error {
 	if err != nil {
 		return fmt.Errorf("%v: %s", err, string(output))
 	}
+	return nil
+}
+
+// Reload SSH daemon
+func reloadSSHD() error {
+    cmd := exec.Command("systemctl", "reload", "ssh")
+    if err := cmd.Run(); err != nil {
+        return fmt.Errorf("failed to reload sshd: %v", err)
+    }
+    return nil
+}
+
+func findPermitRootLogin() (string, error) {
+	file, err := os.Open("/etc/ssh/sshd_config")
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "PermitRootLogin ") {
+			// Split the line into key and value based on spaces
+			fields := strings.Fields(line)
+			if len(fields) >= 2 {
+				return fields[1], nil
+			}
+			break
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return "", err
+	}
+
+	return "", fmt.Errorf("PermitRootLogin not found in sshd_config")
+}
+
+func changePermitRootLogin(newValue string) error {
+	// Open the SSH configuration file in read mode
+	file, err := os.Open("/etc/ssh/sshd_config")
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	// Create a temporary file to write the modified contents
+	tempFile, err := os.CreateTemp("", "sshd_config_temp")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tempFile.Name()) // Clean up temp file
+
+	// Create a scanner to read from the original file
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "PermitRootLogin ") {
+			// Replace the existing PermitRootLogin line with the new value
+			line = "PermitRootLogin " + newValue
+		}
+		// Write the modified line to the temporary file
+		_, err := fmt.Fprintln(tempFile, line)
+		if err != nil {
+			return err
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return err
+	}
+
+	// Close both files before renaming temp file to original file
+	file.Close()
+	tempFile.Close()
+
+	// Rename temp file to original file
+	err = os.Rename(tempFile.Name(), "/etc/ssh/sshd_config")
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
