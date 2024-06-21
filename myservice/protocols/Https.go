@@ -77,9 +77,9 @@ IP.1    = %s
 }
 
 func SSLCertHTTPS(ipAddress string) {
-    certPath := "https_cert.pem"
-    keyPath := "https_key.pem"
-    confPath := "openssl_https.cnf"
+    certPath := "/MySystem/settings/https_cert.pem"
+    keyPath := "/MySystem/settings/https_key.pem"
+    confPath := "/MySystem/settings/openssl_https.cnf"
 
     err := createOpenSSLConfigHTTPS(confPath, ipAddress)
     if err != nil {
