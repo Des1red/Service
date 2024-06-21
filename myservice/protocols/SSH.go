@@ -71,7 +71,6 @@ func startServices() {
         fmt.Printf("Error reloading sshd: %v\n", err)
         return
     }
-    fmt.Println("SSH daemon reloaded.")
 
     // Start SSH service
     startService("ssh")
@@ -90,9 +89,7 @@ func startServices() {
     go signalHandler()
 }
 
-// stopServices stops SSH and Fail2Ban services
 func stopServices() {
-    defer cleanupWG.Done() // Ensure Done() is deferred to guarantee execution
 
     // Remove temporary SSH running file if SSH was running
     if sshRunning {
@@ -108,7 +105,7 @@ func stopServices() {
     }
     fmt.Println("PermitRootLogin changed successfully!")
 
-    // Find permit root login 
+    // Find permit root login
     permitRootLogin, err := findPermitRootLogin()
     if err != nil {
         fmt.Println("Error:", err)
@@ -119,21 +116,21 @@ func stopServices() {
     // Stop Fail2Ban service
     stopService("fail2ban")
 
-    // // Stop SSH service if user confirmed
-    // fmt.Print("\n Stop ssh ? ")
-    // var choice string
-    // for {
-    //     fmt.Scanln(&choice)
-    //     if choice == "y" {
-    //         if checkService("ssh") {
-    //             stopService("ssh")
-    //         }
-    //         break
-    //     } else if choice == "n" {
-    //         break
-    //     }
-    //     fmt.Println("Type y/n")
-    // }
+    // Stop SSH service if user confirmed
+    fmt.Print("\nStop SSH? (y/n): ")
+    var choice string
+    for {
+        fmt.Scanln(&choice)
+        if choice == "y" {
+            if checkService("ssh") {
+                stopService("ssh")
+            }
+            break
+        } else if choice == "n" {
+            break
+        }
+        fmt.Println("Type y/n")
+    }
 }
 
 
@@ -281,11 +278,16 @@ func runCommand(command string, args ...string) error {
 
 // Reload SSH daemon
 func reloadSSHD() error {
-    cmd := exec.Command("systemctl", "reload", "ssh")
-    if err := cmd.Run(); err != nil {
-        return fmt.Errorf("failed to reload sshd: %v", err)
-    }
-    return nil
+	if checkService("ssh") {
+		cmd := exec.Command("systemctl", "reload", "ssh")
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("failed to reload sshd: %v", err)
+		}
+		fmt.Println("SSH daemon reloaded.")
+		return nil
+	}
+	startService("ssh")
+	return nil
 }
 
 func findPermitRootLogin() (string, error) {

@@ -4,10 +4,11 @@ import (
 	"fmt"
 	"os/exec"
 	"syscall"
-
+	"os"
 	"golang.org/x/crypto/ssh/terminal"
 )
 
+// close given port
 func closePorts(name string) {
 	cmd := exec.Command("ufw", "deny", name)
 	err := cmd.Run()
@@ -18,6 +19,7 @@ func closePorts(name string) {
 	}
 }
 
+// open given port
 func openPorts(name string) {
 	cmd := exec.Command("ufw", "allow", name)
 	err := cmd.Run()
@@ -28,6 +30,7 @@ func openPorts(name string) {
 	}
 }
 
+// check if service is active
 func checkService(serviceName string) bool {
 	cmd := exec.Command("systemctl", "is-active", "--quiet", serviceName)
 	err := cmd.Run()
@@ -37,7 +40,7 @@ func checkService(serviceName string) bool {
 	return true
 }
 
-
+// start service
 func startService(serviceName string) {
 	if !checkService(serviceName) {
 		cmd := exec.Command("systemctl", "start", serviceName)
@@ -52,6 +55,7 @@ func startService(serviceName string) {
 	}
 }
 
+// stop service
 func stopService(serviceName string) {
 	cmd := exec.Command("systemctl", "stop", serviceName)
 	err := cmd.Run()
@@ -62,6 +66,7 @@ func stopService(serviceName string) {
 	}
 }
 
+//check service restart if its running 
 func SetUpService(service string) {
 	if !checkService(service) {
 		startService(service)
@@ -83,4 +88,13 @@ func terminalReadPassword() ([]byte, error) {
 	password, err := terminal.ReadPassword(int(syscall.Stdin))
 	fmt.Println() // Move to the next line after password input
 	return password, err
+}
+
+// Function to check if a directory exists
+func directoryExists(path string) bool {
+	info, err := os.Stat(path)
+	if os.IsNotExist(err) {
+		return false
+	}
+	return info.IsDir()
 }

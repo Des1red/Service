@@ -223,15 +223,6 @@ func listFtpUsers() []User {
 	return ftpUsers
 }
 
-// Function to check if a directory exists
-func directoryExists(path string) bool {
-	info, err := os.Stat(path)
-	if os.IsNotExist(err) {
-		return false
-	}
-	return info.IsDir()
-}
-
 func removeUserFromVSFTPDUserList(username string) error {
 	filePath := "/etc/vsftpd.user_list"
     // Read the file contents
