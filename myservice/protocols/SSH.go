@@ -48,26 +48,23 @@ var (
     sshRunning bool
 )
 
-
-
 // startServices starts SSH and Fail2Ban services
 func startServices() {
+    // Change PermitRootLogin to "yes"
+    err := changePermitRootLogin("yes")
+    if err != nil {
+        fmt.Println("Error:", err)
+        return
+    }
+    fmt.Println("PermitRootLogin changed successfully!")
 
-	// Change PermitRootLogin to "no"
-			err := changePermitRootLogin("yes")
-			if err != nil {
-				fmt.Println("Error:", err)
-				return
-			}
-			fmt.Println("PermitRootLogin changed successfully!")
-		
-        // Find permit root login 
-			permitRootLogin, err := findPermitRootLogin()
-			if err != nil {
-				fmt.Println("Error:", err)
-				return
-			}
-			fmt.Println("PermitRootLogin:", permitRootLogin)
+    // Find permit root login 
+    permitRootLogin, err := findPermitRootLogin()
+    if err != nil {
+        fmt.Println("Error:", err)
+        return
+    }
+    fmt.Println("PermitRootLogin:", permitRootLogin)
 
     // Reload SSH daemon
     if err := reloadSSHD(); err != nil {
@@ -78,7 +75,7 @@ func startServices() {
 
     // Start SSH service
     startService("ssh")
-	// Create a temp file to indicate that SSH is running
+    // Create a temp file to indicate that SSH is running
     createTempFile("/var/run/ssh_running")
     sshRunning = true
 
@@ -86,16 +83,16 @@ func startServices() {
     jailConf()
 
     // Start Fail2Ban service
-   	startService("fail2ban")
+    startService("fail2ban")
 
     // Start a goroutine to handle signals for cleanup
-    cleanupWG.Add(1)
+    cleanupWG.Add(1) // Add 1 to WaitGroup counter
     go signalHandler()
 }
 
-
-/// stopServices stops SSH and Fail2Ban services
+// stopServices stops SSH and Fail2Ban services
 func stopServices() {
+    defer cleanupWG.Done() // Ensure Done() is deferred to guarantee execution
 
     // Remove temporary SSH running file if SSH was running
     if sshRunning {
@@ -103,47 +100,46 @@ func stopServices() {
         sshRunning = false
     }
 
-	// change and print new permit loggin 
-	//Change PermitRootLogin to "no"
-	err := changePermitRootLogin("no")
-	if err != nil {
-		fmt.Println("Error:", err)
-		return
-	}
-	fmt.Println("PermitRootLogin changed successfully!")
+    // Change PermitRootLogin to "no"
+    err := changePermitRootLogin("no")
+    if err != nil {
+        fmt.Println("Error:", err)
+        return
+    }
+    fmt.Println("PermitRootLogin changed successfully!")
 
-	// Find permit root login 
-	permitRootLogin, err := findPermitRootLogin()
-	if err != nil {
-		fmt.Println("Error:", err)
-		return
-	}
-	fmt.Println("PermitRootLogin:", permitRootLogin)
-	
+    // Find permit root login 
+    permitRootLogin, err := findPermitRootLogin()
+    if err != nil {
+        fmt.Println("Error:", err)
+        return
+    }
+    fmt.Println("PermitRootLogin:", permitRootLogin)
 
     // Stop Fail2Ban service
     stopService("fail2ban")
 
-	fmt.Print("\n Stop ssh ? ")
-	var choice string
-	for {
-		fmt.Scanln(&choice)
-		if choice == "y" {
-			stopService("ssh")
-			break
-		} else if choice == "n" {
-			break
-		}
-		fmt.Println("Type y/n")
-	}
-
-    // Signal completion of cleanup
-    cleanupWG.Done()
+    // // Stop SSH service if user confirmed
+    // fmt.Print("\n Stop ssh ? ")
+    // var choice string
+    // for {
+    //     fmt.Scanln(&choice)
+    //     if choice == "y" {
+    //         if checkService("ssh") {
+    //             stopService("ssh")
+    //         }
+    //         break
+    //     } else if choice == "n" {
+    //         break
+    //     }
+    //     fmt.Println("Type y/n")
+    // }
 }
+
 
 // signalHandler handles SIGINT and SIGTERM signals
 func signalHandler() {
-    defer cleanupWG.Done()
+    defer cleanupWG.Done() 
 
     sig := make(chan os.Signal, 1)
     signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)

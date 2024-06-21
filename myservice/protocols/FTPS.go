@@ -903,23 +903,6 @@ func checkAndAddNoLogin() error {
     return nil
 }
 
-func SetUpService(service string) {
-	if !checkService(service) {
-		startService(service)
-	} else {
-		fmt.Printf("Service %s already up and running.\n", service)
-		fmt.Println("Restarting service...")
-		cmd := exec.Command("systemctl", "restart", service)
-		err := cmd.Run()
-		if err != nil {
-			fmt.Printf("Could not restart service: %s\n", err)
-			return
-		} else {
-			fmt.Println("Service restart successful.")
-		}
-	}
-}
-
 func ftpSetup() {
 	//add nologin shell to /etc/shells
 	if err := checkAndAddNoLogin(); err != nil {
