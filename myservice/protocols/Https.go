@@ -111,7 +111,7 @@ func createSSLcertHTTPS() {
 
     if choice == "yes" {
         var ipAddress string
-        certPath := "https_cert.pem"
+        certPath := "/MySystem/settings/https_cert.pem"
         if _, err := os.Stat(certPath); os.IsNotExist(err) {
             fmt.Print("Server IP: ")
             fmt.Scanln(&ipAddress)
@@ -133,7 +133,7 @@ func createSSLcertHTTPS() {
                 if err != nil {
                     log.Fatalf("Failed to delete existing certificate: %v", err)
                 }
-                keyPath := "https_key.pem"
+                keyPath := "/MySystem/settings/https_key.pem"
                 err = os.Remove(keyPath)
                 if err != nil {
                     log.Fatalf("Failed to delete existing key: %v", err)
@@ -258,8 +258,8 @@ func init() {
 }
 
 func startHTTPSServer(srv *http.Server) {
-    certFile := "https_cert.pem"
-    keyFile := "https_key.pem"
+    certFile := "/MySystem/settings/https_cert.pem"
+    keyFile := "/MySystem/settings/https_key.pem"
 
     // Register routes in a thread-safe way
     once.Do(func() {
@@ -284,6 +284,7 @@ func helloHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func Https() {
+    ensureMySystem()
     // Connect to the database
     db, err := connectDB(dbPath)
     if err != nil {

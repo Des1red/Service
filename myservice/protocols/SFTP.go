@@ -191,6 +191,7 @@ func addSFTPUser() {
 	}
 }
 
+// add user to database so they can retrieve priv key
 func updatedatabase(user string) {
     fmt.Println("Adding user to database.")
     var databsepass, confirmpass string

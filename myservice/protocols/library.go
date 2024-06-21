@@ -98,3 +98,22 @@ func directoryExists(path string) bool {
 	}
 	return info.IsDir()
 }
+
+// make sure MySystem Dir exists to save certificates and server settings
+func ensureMySystem() {
+	systemSettingsPath := "/MySystem/settings"
+	// create directory to store certificates
+	if !directoryExists(systemSettingsPath) {
+		// Create the directory along with any necessary parents
+			err := os.MkdirAll(systemSettingsPath, os.ModePerm)
+			if err != nil {
+				fmt.Println("Error creating directory:", err)
+				return
+			}
+	
+			fmt.Println("Directory created successfully:", systemSettingsPath)
+		} else {
+			fmt.Print("Found System Dir, continue ...")
+		}	
+	
+}

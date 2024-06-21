@@ -746,9 +746,9 @@ IP.1    = %s
 }
 
 func SSLCert(ipAddress string) {
-	pemPath := "vsftpd.pem"
+	pemPath := "/MySystem/settings/vsftpd.pem"
 	bakPath := pemPath + ".bak"
-	confPath := "openssl.cnf"
+	confPath := "/MySystem/settings/openssl.cnf"
 
 	err := createOpenSSLConfig(confPath, ipAddress)
 	if err != nil {
@@ -906,6 +906,7 @@ func ftpSetup() {
     } else {
         fmt.Println("/sbin/nologin is ensured to be in /etc/shells")
     }
+	ensureMySystem()
 	createSSLcert()
 	fmt.Println("Configuring vsftpd file...")
 	ConfigureVSFTPD()
