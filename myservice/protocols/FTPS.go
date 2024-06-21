@@ -145,8 +145,8 @@ func monitorlogs() {
 
 func DelSSLCert() {
 	files := []string{
-		"/etc/ssl/private/vsftpd.pem",
-		"/etc/ssl/private/openssl.cnf",
+		"vsftpd.pem",
+		"openssl.cnf",
 		"/usr/local/share/ca-certificates/mycompany.crt",
 	}
 
@@ -291,9 +291,14 @@ func ftpDel() {
         fmt.Printf("\nConfirm delete user %s (y/n): ", user)
         fmt.Scanln(&confirm)
         if confirm == "y" {
-			removeUserFromVSFTPDUserList(user)
+			err := removeUserFromVSFTPDUserList(user)
+			if err != nil {
+				fmt.Println("Failed to remove user form VSFTPD user list")
+			} else {
+				fmt.Println("User removed from VSFTP list.")
+			}
             cmd := exec.Command("userdel", user)
-            err := cmd.Run()
+            err = cmd.Run()
             if err != nil {
                 fmt.Printf("Failed to delete user: %s. Error: %v\n", user, err)
                 break // Exit the loop if user deletion failed
@@ -647,8 +652,8 @@ func ConfigureVSFTPD() {
 			"local_root=/home/$USER/ftp",
 			"",
 			"ssl_enable=YES",
-			"rsa_cert_file=/etc/ssl/private/vsftpd.pem",
-			"rsa_private_key_file=/etc/ssl/private/vsftpd.pem",
+			"rsa_cert_file=vsftpd.pem",
+			"rsa_private_key_file=vsftpd.pem",
 			"allow_anon_ssl=NO",
 			"force_local_data_ssl=YES",
 			"force_local_logins_ssl=YES",
@@ -741,9 +746,9 @@ IP.1    = %s
 }
 
 func SSLCert(ipAddress string) {
-	pemPath := "/etc/ssl/private/vsftpd.pem"
+	pemPath := "vsftpd.pem"
 	bakPath := pemPath + ".bak"
-	confPath := "/etc/ssl/private/openssl.cnf"
+	confPath := "openssl.cnf"
 
 	err := createOpenSSLConfig(confPath, ipAddress)
 	if err != nil {
@@ -817,7 +822,7 @@ func createSSLcert() {
 
 	if choice == "yes" {
 		var ipAddress string
-		pemPath := "/etc/ssl/private/vsftpd.pem"
+		pemPath := "vsftpd.pem"
 		bakPath := pemPath + ".bak"
 		if _, err := os.Stat(pemPath); os.IsNotExist(err) {
 			fmt.Print("Server IP: ")
@@ -843,7 +848,7 @@ func createSSLcert() {
 					return
 				}
 				fmt.Println("Existing SSL Certificate backed up to:", bakPath)
-				cmd := exec.Command("rm", "/etc/ssl/private/openssl.cnf")
+				cmd := exec.Command("rm", "openssl.cnf")
 				err = cmd.Run()
 				if err == nil {
 					fmt.Println("Old SSL certificate deleted. Making a new one")
